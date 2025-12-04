@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo Print - Finishing & Diskon</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        .card h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .receipt-preview {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            white-space: pre;
+            overflow-x: auto;
+            border: 2px dashed #ccc;
+        }
+        .data-json {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 20px;
+            border-radius: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            overflow-x: auto;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .btn-container {
+            display: flex;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .btn {
+            flex: 1;
+            padding: 15px 30px;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .btn-print {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .btn-print:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        .btn-preview {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+        .btn-preview:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(245, 87, 108, 0.4);
+        }
+        .status {
+            margin-top: 15px;
+            padding: 15px;
+            border-radius: 10px;
+            font-weight: bold;
+            text-align: center;
+            display: none;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 2px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 2px solid #f5c6cb;
+        }
+        .status.show {
+            display: block;
+        }
+        .features {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            margin-top: 20px;
+        }
+        .features h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+        .feature-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+        .feature-item {
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        .feature-item h3 {
+            color: #667eea;
+            margin-bottom: 5px;
+            font-size: 1em;
+        }
+        .feature-item p {
+            color: #666;
+            font-size: 0.9em;
+        }
+        @media (max-width: 768px) {
+            .content {
+                grid-template-columns: 1fr;
+            }
+            .btn-container {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🖨️ Thermal Printer Demo</h1>
+            <p>Finishing & Diskon Feature Test</p>
+        </div>
+
+        <div class="content">
+            <div class="card">
+                <h2>📄 Receipt Preview</h2>
+                <div class="receipt-preview" id="receiptPreview">Loading...</div>
+                <div class="btn-container">
+                    <button class="btn btn-preview" onclick="refreshPreview()">🔄 Refresh Preview</button>
+                    <button class="btn btn-print" onclick="printReceipt()">🖨️ Print Now</button>
+                </div>
+                <div id="status" class="status"></div>
+            </div>
+
+            <div class="card">
+                <h2>📋 JSON Data</h2>
+                <div class="data-json" id="jsonData"></div>
+            </div>
+        </div>
+
+        <div class="features">
+            <h2>✨ Fitur yang Ditampilkan</h2>
+            <div class="feature-list">
+                <div class="feature-item">
+                    <h3>✅ Multiple Finishing</h3>
+                    <p>Setiap item dapat memiliki beberapa finishing dengan harga berbeda</p>
+                </div>
+                <div class="feature-item">
+                    <h3>✅ Subtotal per Item</h3>
+                    <p>Otomatis menghitung subtotal item + finishing</p>
+                </div>
+                <div class="feature-item">
+                    <h3>✅ Diskon</h3>
+                    <p>Menampilkan potongan harga dengan tanda minus (-)</p>
+                </div>
+                <div class="feature-item">
+                    <h3>✅ PPN</h3>
+                    <p>Pajak ditampilkan terpisah sebelum total</p>
+                </div>
+                <div class="feature-item">
+                    <h3>✅ Format Rupiah</h3>
+                    <p>Format mata uang Indonesia yang rapi</p>
+                </div>
+                <div class="feature-item">
+                    <h3>✅ Layout 32 Char</h3>
+                    <p>Optimal untuk thermal printer 58mm</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const receiptData = {
+            store: {
+                name: "Printing Express",
+                address: "Jl. Eastern Boulevard, Sampora, Kec. Cisauk, Kabupaten Tangerang, Banten 15345",
+                phone: "626262626212"
+            },
+            receiptNumber: "RCP-PIO-20251204-716289-7X7XGC",
+            orderNumber: "PTI/ODR/2511/00046",
+            customerName: "Wartini",
+            customerPhone: "132123123",
+            items: [
+                {
+                    name: "FLEXY 340GR (HIGH RES)",
+                    quantity: 1,
+                    price: 20000,
+                    total: 20000,
+                    finishings: [
+                        { name: "Test 1", price: 1000 },
+                        { name: "Laminating", price: 2000 }
+                    ]
+                },
+                {
+                    name: "STICKER METALIC - GOLD",
+                    quantity: 2,
+                    price: 10000,
+                    total: 20000,
+                    finishings: [
+                        { name: "Cutting", price: 500 }
+                    ]
+                }
+            ],
+            subtotal: 43500,
+            ppnAmount: 4350,
+            discountAmount: 5000,
+            totalAmount: 42850,
+            paymentMethod: "Cash",
+            cashReceived: 50000,
+            cashChange: 7150,
+            paymentDate: "2024-12-04 14:30:00"
+        };
+
+        function formatRupiah(amount) {
+            return new Intl.NumberFormat('id-ID', {
+                style: 'currency',
+                currency: 'IDR',
+                minimumFractionDigits: 0
+            }).format(amount).replace('IDR', 'Rp');
+        }
+
+        function formatLine(left, right = '', width = 32) {
+            const leftStr = left.toString().substring(0, width - right.length);
+            const rightStr = right.toString();
+            const spaces = ' '.repeat(Math.max(0, width - leftStr.length - rightStr.length));
+            return leftStr + spaces + rightStr;
+        }
+
+        function generatePreview() {
+            let preview = '';
+            preview += '================================\n';
+            preview += '     Printing Express\n';
+            preview += 'Jl. Eastern Boulevard, Sampora,\n';
+            preview += 'Kec. Cisauk, Kabupaten\n';
+            preview += 'Tangerang, Banten 15345\n';
+            preview += 'Tel: 626262626212\n';
+            preview += '================================\n\n';
+            preview += 'Tanggal: 2024-12-04 14:30:00\n';
+            preview += 'No. Struk: RCP-PIO-20251204-716289-7X7XGC\n';
+            preview += 'No. Order: PTI/ODR/2511/00046\n';
+            preview += 'Customer: Wartini\n';
+            preview += 'Telp: 132123123\n';
+            preview += '--------------------------------\n';
+            preview += formatLine('Item', 'Qty  Harga') + '\n';
+            preview += '--------------------------------\n';
+
+            receiptData.items.forEach(item => {
+                preview += item.name + '\n';
+                const itemTotal = item.price * item.quantity;
+                preview += formatLine(`  ${item.quantity} x ${formatRupiah(item.price)}`, formatRupiah(itemTotal)) + '\n';
+
+                let finishingTotal = 0;
+                if (item.finishings) {
+                    item.finishings.forEach(finishing => {
+                        finishingTotal += finishing.price;
+                        preview += formatLine(`    + ${finishing.name}`, formatRupiah(finishing.price)) + '\n';
+                    });
+                }
+
+                if (finishingTotal > 0) {
+                    preview += formatLine('  Subtotal item:', formatRupiah(itemTotal + finishingTotal)) + '\n';
+                }
+            });
+
+            preview += '--------------------------------\n';
+            preview += formatLine('Subtotal:', formatRupiah(receiptData.subtotal)) + '\n';
+            preview += formatLine('PPN:', formatRupiah(receiptData.ppnAmount)) + '\n';
+            preview += formatLine('Diskon:', '-' + formatRupiah(receiptData.discountAmount)) + '\n';
+            preview += formatLine('TOTAL:', formatRupiah(receiptData.totalAmount)) + '\n';
+            preview += formatLine('Metode:', receiptData.paymentMethod) + '\n';
+            preview += formatLine('Bayar:', formatRupiah(receiptData.cashReceived)) + '\n';
+            preview += formatLine('Kembali:', formatRupiah(receiptData.cashChange)) + '\n\n';
+            preview += '        Terima Kasih!\n';
+            preview += '   Selamat Berbelanja Kembali\n';
+            preview += '================================\n';
+
+            return preview;
+        }
+
+        function refreshPreview() {
+            document.getElementById('receiptPreview').textContent = generatePreview();
+            document.getElementById('jsonData').textContent = JSON.stringify(receiptData, null, 2);
+        }
+
+        function showStatus(message, isSuccess) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = 'status ' + (isSuccess ? 'success' : 'error') + ' show';
+            setTimeout(() => {
+                statusEl.classList.remove('show');
+            }, 5000);
+        }
+
+        function printReceipt() {
+            const encodedData = encodeURIComponent(JSON.stringify(receiptData));
+            const printWindow = window.open(
+                `http://localhost:5000/print/receipt?data=${encodedData}`,
+                '_blank',
+                'width=400,height=300'
+            );
+
+            if (printWindow) {
+                showStatus('✅ Print request sent! Check printer...', true);
+            } else {
+                showStatus('❌ Pop-up blocked! Please allow pop-ups for this site.', false);
+            }
+        }
+
+        // Initialize
+        refreshPreview();
+    </script>
+</body>
+</html>

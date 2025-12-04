@@ -1,0 +1,96 @@
+CONTOH URL UNTUK TEST PRINT DENGAN FINISHING DAN DISKON
+==========================================================
+
+1. URL LENGKAP (Copy paste ke browser):
+http://localhost:5000/print/receipt?data=%7B%22store%22%3A%7B%22name%22%3A%22Printing%20Express%22%2C%22address%22%3A%22Jl.%20Eastern%20Boulevard%2C%20Sampora%2C%20Kec.%20Cisauk%2C%20Kabupaten%20Tangerang%2C%20Banten%2015345%22%2C%22phone%22%3A%22626262626212%22%7D%2C%22receiptNumber%22%3A%22RCP-PIO-20251204-716289-7X7XGC%22%2C%22orderNumber%22%3A%22PTI%2FODR%2F2511%2F00046%22%2C%22customerName%22%3A%22Wartini%22%2C%22customerPhone%22%3A%22132123123%22%2C%22items%22%3A%5B%7B%22name%22%3A%22FLEXY%20340GR%20%28HIGH%20RES%29%22%2C%22quantity%22%3A1%2C%22price%22%3A20000%2C%22total%22%3A20000%2C%22finishings%22%3A%5B%7B%22name%22%3A%22Test%201%22%2C%22price%22%3A1000%7D%2C%7B%22name%22%3A%22Laminating%22%2C%22price%22%3A2000%7D%5D%7D%2C%7B%22name%22%3A%22STICKER%20METALIC%20-%20GOLD%22%2C%22quantity%22%3A2%2C%22price%22%3A10000%2C%22total%22%3A20000%2C%22finishings%22%3A%5B%7B%22name%22%3A%22Cutting%22%2C%22price%22%3A500%7D%5D%7D%5D%2C%22subtotal%22%3A43500%2C%22ppnAmount%22%3A4350%2C%22discountAmount%22%3A5000%2C%22totalAmount%22%3A42850%2C%22paymentMethod%22%3A%22Cash%22%2C%22cashReceived%22%3A50000%2C%22cashChange%22%3A7150%2C%22paymentDate%22%3A%222024-12-04%2014%3A30%3A00%22%7D
+
+2. DATA JSON (untuk referensi):
+{
+  "store": {
+    "name": "Printing Express",
+    "address": "Jl. Eastern Boulevard, Sampora, Kec. Cisauk, Kabupaten Tangerang, Banten 15345",
+    "phone": "626262626212"
+  },
+  "receiptNumber": "RCP-PIO-20251204-716289-7X7XGC",
+  "orderNumber": "PTI/ODR/2511/00046",
+  "customerName": "Wartini",
+  "customerPhone": "132123123",
+  "items": [
+    {
+      "name": "FLEXY 340GR (HIGH RES)",
+      "quantity": 1,
+      "price": 20000,
+      "total": 20000,
+      "finishings": [
+        {"name": "Test 1", "price": 1000},
+        {"name": "Laminating", "price": 2000}
+      ]
+    },
+    {
+      "name": "STICKER METALIC - GOLD",
+      "quantity": 2,
+      "price": 10000,
+      "total": 20000,
+      "finishings": [
+        {"name": "Cutting", "price": 500}
+      ]
+    }
+  ],
+  "subtotal": 43500,
+  "ppnAmount": 4350,
+  "discountAmount": 5000,
+  "totalAmount": 42850,
+  "paymentMethod": "Cash",
+  "cashReceived": 50000,
+  "cashChange": 7150,
+  "paymentDate": "2024-12-04 14:30:00"
+}
+
+3. TAMPILAN STRUK YANG AKAN TERCETAK:
+================================
+     Printing Express
+Jl. Eastern Boulevard, Sampora,
+Kec. Cisauk, Kabupaten
+Tangerang, Banten 15345
+Tel: 626262626212
+================================
+
+Tanggal: 2024-12-04 14:30:00
+No. Struk: RCP-PIO-20251204-716289-7X7XGC
+No. Order: PTI/ODR/2511/00046
+Customer: Wartini
+Telp: 132123123
+--------------------------------
+Item                  Qty  Harga
+--------------------------------
+FLEXY 340GR (HIGH RES)
+  1 x Rp 20.000        Rp 20.000
+    + Test 1            Rp 1.000
+    + Laminating        Rp 2.000
+  Subtotal item:       Rp 23.000
+STICKER METALIC - GOLD
+  2 x Rp 10.000        Rp 20.000
+    + Cutting             Rp 500
+  Subtotal item:       Rp 20.500
+--------------------------------
+Subtotal:              Rp 43.500
+PPN:                    Rp 4.350
+Diskon:                -Rp 5.000
+TOTAL:                 Rp 42.850
+Metode:                     Cash
+Bayar:                 Rp 50.000
+Kembali:                Rp 7.150
+
+        Terima Kasih!
+   Selamat Berbelanja Kembali
+
+================================
+
+FITUR YANG SUDAH TERINTEGRASI:
+✅ Finishing per item ditampilkan dengan indent
+✅ Subtotal per item (harga item + finishing)
+✅ Diskon ditampilkan dengan tanda minus (-)
+✅ PPN ditampilkan terpisah
+✅ Total akhir sudah memperhitungkan semua
+✅ Format Rupiah yang rapi
+✅ Layout 32 karakter untuk thermal printer 58mm
