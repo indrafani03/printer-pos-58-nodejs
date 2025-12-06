@@ -268,6 +268,8 @@ function createReceiptText(data) {
     subtotal = 0,
     ppnAmount = 0,
     discountAmount = 0,
+    additionalServiceValue = 0,
+    additionalServiceNotes = "",
     totalAmount = 0,
     paymentMethod = "",
     cashReceived = 0,
@@ -365,6 +367,14 @@ function createReceiptText(data) {
 
   if (discountAmount > 0) {
     receipt += formatLine("Diskon:", "-" + formatRupiah(discountAmount)) + commands.NEW_LINE;
+  }
+
+  if (additionalServiceValue > 0) {
+    receipt += formatLine("Biaya Tambahan:", formatRupiah(additionalServiceValue)) + commands.NEW_LINE;
+    if (additionalServiceNotes) {
+      const notes = cleanText(additionalServiceNotes).substring(0, 28);
+      receipt += `  (${notes})` + commands.NEW_LINE;
+    }
   }
 
   receipt += commands.BOLD_ON;
