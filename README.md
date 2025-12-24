@@ -40,7 +40,7 @@ Untuk membuat service otomatis start saat komputer hidup, gunakan Windows Servic
 
 2. Navigate ke folder project:
    ```bash
-   cd C:\Users\PT UMA\Documents\indrafani\printer
+   cd
    ```
 
 3. Install service:

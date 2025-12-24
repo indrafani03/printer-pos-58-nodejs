@@ -270,6 +270,8 @@ function createReceiptText(data) {
     discountAmount = 0,
     additionalServiceValue = 0,
     additionalServiceNotes = "",
+    designCost = 0,
+    designerName = "",
     totalAmount = 0,
     paymentMethod = "",
     cashReceived = 0,
@@ -281,6 +283,7 @@ function createReceiptText(data) {
     payment = cashReceived || 0,
     change = cashChange || 0,
     cashier = "",
+    cashierName = "",
     transactionId = receiptNumber || orderNumber || ""
   } = receiptData;
 
@@ -313,7 +316,7 @@ function createReceiptText(data) {
   receipt += "Tanggal: " + cleanText(paymentDate || new Date().toLocaleString('id-ID')) + commands.NEW_LINE;
   if (receiptNumber) receipt += "No. Struk: " + cleanText(receiptNumber) + commands.NEW_LINE;
   if (orderNumber) receipt += "No. Order: " + cleanText(orderNumber) + commands.NEW_LINE;
-  if (cashier) receipt += "Kasir: " + cleanText(cashier) + commands.NEW_LINE;
+  if (cashierName || cashier) receipt += "Kasir: " + cleanText(cashierName || cashier) + commands.NEW_LINE;
   if (customerName) receipt += "Customer: " + cleanText(customerName) + commands.NEW_LINE;
   receipt += "--------------------------------" + commands.NEW_LINE;
 
@@ -369,7 +372,12 @@ function createReceiptText(data) {
     receipt += formatLine("Diskon:", "-" + formatRupiah(discountAmount)) + commands.NEW_LINE;
   }
 
-  if (additionalServiceValue > 0) {
+  if (designCost > 0) {
+    receipt += formatLine("Biaya Desain:", formatRupiah(designCost)) + commands.NEW_LINE;
+    if (designerName) {
+      receipt += `  (Designer: ${cleanText(designerName)})` + commands.NEW_LINE;
+    }
+  } else if (additionalServiceValue > 0) {
     receipt += formatLine("Biaya Tambahan:", formatRupiah(additionalServiceValue)) + commands.NEW_LINE;
     if (additionalServiceNotes) {
       const notes = cleanText(additionalServiceNotes).substring(0, 28);

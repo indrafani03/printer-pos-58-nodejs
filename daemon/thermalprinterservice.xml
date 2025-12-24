@@ -1,0 +1,34 @@
+<service>
+	<id>thermalprinterservice.exe</id>
+	<name>Thermal Printer Service</name>
+	<description>API service for thermal printer operations (RPP02N)</description>
+	<executable>C:\Program Files\nodejs\node.exe</executable>
+	<argument>--harmony</argument>
+	<argument>--max_old_space_size=4096</argument>
+	<argument>C:\Users\PT UMA\Documents\indrafani\printer\node_modules\node-windows\lib\wrapper.js</argument>
+	<argument>--file</argument>
+	<argument>C:\Users\PT UMA\Documents\indrafani\printer\index.js</argument>
+	<argument>--scriptoptions=</argument>
+	<argument>--log</argument>
+	<argument>Thermal Printer Service wrapper</argument>
+	<argument>--grow</argument>
+	<argument>0.25</argument>
+	<argument>--wait</argument>
+	<argument>1</argument>
+	<argument>--maxrestarts</argument>
+	<argument>3</argument>
+	<argument>--abortonerror</argument>
+	<argument>n</argument>
+	<argument>--stopparentfirst</argument>
+	<argument>undefined</argument>
+	<logmode>rotate</logmode>
+	<stoptimeout>30sec</stoptimeout>
+	<env name="PORT" value="5000"/>
+	<env name="NODE_ENV" value="production"/>
+	<serviceaccount>
+		<domain>LAPTOP-9FNI4R32</domain>
+		<user>LocalSystem</user>
+		<password></password>
+	</serviceaccount>
+	<workingdirectory>C:\Users\PT UMA\Documents\indrafani\printer</workingdirectory>
+</service>
