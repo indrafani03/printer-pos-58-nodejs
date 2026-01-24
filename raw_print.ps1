@@ -35,7 +35,7 @@ function Clear-PrinterJobs {
         if ($jobs) {
             Write-Host "Clearing $($jobs.Count) stuck job(s)..."
             $jobs | Remove-PrintJob -ErrorAction SilentlyContinue
-            Start-Sleep -Milliseconds 1000
+            Start-Sleep -Milliseconds 300
         }
     } catch {
         Write-Host "Note: Could not check print jobs: $_"
@@ -145,15 +145,14 @@ public class RawPrinterHelper
                 Console.WriteLine("WritePrinter failed. Written: " + dwWritten + "/" + pBytes.Length + " Error: " + errorCode);
             }
 
-            // Ensure proper cleanup with longer delays
-            Thread.Sleep(200); // Wait for data to be sent
+            // Cleanup - minimal delays
+            Thread.Sleep(50); // Brief wait for data to be sent
             EndPagePrinter(hPrinter);
-            Thread.Sleep(300); // Longer delay before ending doc
+            Thread.Sleep(50); // Brief delay before ending doc
             EndDocPrinter(hPrinter);
-            Thread.Sleep(500); // Longer delay before closing to let printer process
+            Thread.Sleep(100); // Brief delay before closing
             ClosePrinter(hPrinter);
             hPrinter = IntPtr.Zero;
-            Thread.Sleep(300); // Additional delay after closing
 
             return writeSuccess && dwWritten == pBytes.Length ? 0 : (errorCode > 0 ? errorCode : 4);
         }
@@ -182,11 +181,10 @@ try {
     Reset-PrintSpooler
 
     # Wait for any pending jobs to complete
-    $ready = Wait-PrinterReady -Printer $PrinterName -MaxWaitSeconds 10
+    $ready = Wait-PrinterReady -Printer $PrinterName -MaxWaitSeconds 3
     if (-not $ready) {
         Write-Host "Printer busy, clearing stuck jobs..."
         Clear-PrinterJobs -Printer $PrinterName
-        Start-Sleep -Milliseconds 500
     }
 
     # Compile the C# code
@@ -213,8 +211,8 @@ try {
         if ($result -eq 0) {
             $success = $true
             Write-Host "Print successful on attempt $attempt"
-            # Wait for printer to finish processing
-            Start-Sleep -Milliseconds 1000
+            # Brief wait for printer to finish processing
+            Start-Sleep -Milliseconds 200
             break
         } else {
             $lastError = $result
@@ -222,11 +220,11 @@ try {
 
             if ($attempt -lt $MaxRetries) {
                 Write-Host "Waiting before retry..."
-                Start-Sleep -Milliseconds 1500
+                Start-Sleep -Milliseconds 500
 
                 # Clear jobs and wait for printer ready before retry
                 Clear-PrinterJobs -Printer $PrinterName
-                Wait-PrinterReady -Printer $PrinterName -MaxWaitSeconds 5 | Out-Null
+                Wait-PrinterReady -Printer $PrinterName -MaxWaitSeconds 2 | Out-Null
             }
         }
     }

@@ -26,7 +26,7 @@ app.use('/print', (req, res, next) => {
 // Configuration
 const DEFAULT_PRINTER = 'POS58'; // Nama printer Windows Anda
 const DEBUG_MODE = process.env.DEBUG === 'true' || true; // Set false di production
-const PRINT_COOLDOWN_MS = 2000; // Minimum delay between prints (2 detik)
+const PRINT_COOLDOWN_MS = 500; // Minimum delay between prints (0.5 detik)
 let currentPrinter = DEFAULT_PRINTER;
 let availablePrinters = [];
 let autoReconnectEnabled = false; // Default disabled untuk hemat kertas
@@ -279,8 +279,8 @@ function printToWindowsPrinter(printerName, data, retryCount = 0) {
       debugLog(`Sending print job to ${printerName}...`);
 
       // Execute PowerShell raw printing with retries built-in
-      exec(`powershell -ExecutionPolicy Bypass -File "${rawPrintScript}" -PrinterName "${printerName}" -DataFile "${tempFile}" -MaxRetries 3`, {
-        timeout: 45000 // Increased timeout for retries
+      exec(`powershell -ExecutionPolicy Bypass -File "${rawPrintScript}" -PrinterName "${printerName}" -DataFile "${tempFile}" -MaxRetries 2`, {
+        timeout: 15000 // Faster timeout
       }, async (error, stdout, stderr) => {
         // Cleanup temp file
         try {
@@ -296,9 +296,6 @@ function printToWindowsPrinter(printerName, data, retryCount = 0) {
           console.log('✅ Print completed successfully');
           lastPrintTime = Date.now();
           isPrinting = false;
-
-          // Extra delay to let printer finish physically
-          await new Promise(r => setTimeout(r, 500));
           resolve('Print successful');
         } else if (error || !output.includes('Print successful')) {
           console.error('❌ Print failed:', output);
@@ -308,7 +305,7 @@ function printToWindowsPrinter(printerName, data, retryCount = 0) {
             console.log(`🔄 Retrying at Node level (${retryCount + 1}/${maxRetries})...`);
             isPrinting = false; // Release lock for retry
             await clearPrintJobs(printerName);
-            await new Promise(r => setTimeout(r, 2000)); // Wait before retry
+            await new Promise(r => setTimeout(r, 500)); // Brief wait before retry
 
             try {
               const result = await printToWindowsPrinter(printerName, data, retryCount + 1);
