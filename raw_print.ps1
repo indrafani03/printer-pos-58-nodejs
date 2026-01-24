@@ -1,14 +1,67 @@
-# Raw printer using Win32 API
+# Raw printer using Win32 API with retry and spooler management
 param(
     [string]$PrinterName = "POS58",
-    [string]$DataFile = ""
+    [string]$DataFile = "",
+    [int]$MaxRetries = 3
 )
+
+# Function to wait for pending jobs to complete
+function Wait-PrinterReady {
+    param([string]$Printer, [int]$MaxWaitSeconds = 10)
+
+    $waited = 0
+    while ($waited -lt $MaxWaitSeconds) {
+        try {
+            $jobs = Get-PrintJob -PrinterName $Printer -ErrorAction SilentlyContinue
+            if (-not $jobs -or $jobs.Count -eq 0) {
+                return $true
+            }
+            Write-Host "Waiting for $($jobs.Count) job(s) to complete..."
+            Start-Sleep -Seconds 1
+            $waited++
+        } catch {
+            return $true
+        }
+    }
+    return $false
+}
+
+# Function to clear print jobs
+function Clear-PrinterJobs {
+    param([string]$Printer)
+
+    try {
+        $jobs = Get-PrintJob -PrinterName $Printer -ErrorAction SilentlyContinue
+        if ($jobs) {
+            Write-Host "Clearing $($jobs.Count) stuck job(s)..."
+            $jobs | Remove-PrintJob -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 1000
+        }
+    } catch {
+        Write-Host "Note: Could not check print jobs: $_"
+    }
+}
+
+# Function to restart print spooler if needed
+function Reset-PrintSpooler {
+    try {
+        $spooler = Get-Service -Name Spooler
+        if ($spooler.Status -ne 'Running') {
+            Write-Host "Restarting Print Spooler service..."
+            Restart-Service -Name Spooler -Force
+            Start-Sleep -Seconds 2
+        }
+    } catch {
+        Write-Host "Note: Could not check spooler: $_"
+    }
+}
 
 # Win32 API untuk raw printing
 $code = @'
 using System;
 using System.Runtime.InteropServices;
 using System.IO;
+using System.Threading;
 
 public class RawPrinterHelper
 {
@@ -44,36 +97,70 @@ public class RawPrinterHelper
     [DllImport("winspool.Drv", EntryPoint = "WritePrinter", SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
     public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, Int32 dwCount, out Int32 dwWritten);
 
-    public static bool SendBytesToPrinter(string szPrinterName, byte[] pBytes)
+    public static int SendBytesToPrinter(string szPrinterName, byte[] pBytes)
     {
         IntPtr pUnmanagedBytes = IntPtr.Zero;
         IntPtr hPrinter = IntPtr.Zero;
         DOCINFOA di = new DOCINFOA();
-        bool bSuccess = false;
+        int errorCode = 0;
 
-        di.pDocName = "Raw Document";
+        di.pDocName = "Receipt_" + DateTime.Now.ToString("yyyyMMdd_HHmmss");
         di.pDataType = "RAW";
 
         try
         {
-            if (OpenPrinter(szPrinterName, out hPrinter, IntPtr.Zero))
+            if (!OpenPrinter(szPrinterName, out hPrinter, IntPtr.Zero))
             {
-                if (StartDocPrinter(hPrinter, 1, di))
-                {
-                    if (StartPagePrinter(hPrinter))
-                    {
-                        pUnmanagedBytes = Marshal.AllocCoTaskMem(pBytes.Length);
-                        Marshal.Copy(pBytes, 0, pUnmanagedBytes, pBytes.Length);
-
-                        Int32 dwWritten = 0;
-                        bSuccess = WritePrinter(hPrinter, pUnmanagedBytes, pBytes.Length, out dwWritten);
-
-                        EndPagePrinter(hPrinter);
-                    }
-                    EndDocPrinter(hPrinter);
-                }
-                ClosePrinter(hPrinter);
+                errorCode = Marshal.GetLastWin32Error();
+                Console.WriteLine("OpenPrinter failed. Error: " + errorCode);
+                return errorCode > 0 ? errorCode : 1;
             }
+
+            if (!StartDocPrinter(hPrinter, 1, di))
+            {
+                errorCode = Marshal.GetLastWin32Error();
+                Console.WriteLine("StartDocPrinter failed. Error: " + errorCode);
+                ClosePrinter(hPrinter);
+                return errorCode > 0 ? errorCode : 2;
+            }
+
+            if (!StartPagePrinter(hPrinter))
+            {
+                errorCode = Marshal.GetLastWin32Error();
+                Console.WriteLine("StartPagePrinter failed. Error: " + errorCode);
+                EndDocPrinter(hPrinter);
+                ClosePrinter(hPrinter);
+                return errorCode > 0 ? errorCode : 3;
+            }
+
+            pUnmanagedBytes = Marshal.AllocCoTaskMem(pBytes.Length);
+            Marshal.Copy(pBytes, 0, pUnmanagedBytes, pBytes.Length);
+
+            Int32 dwWritten = 0;
+            bool writeSuccess = WritePrinter(hPrinter, pUnmanagedBytes, pBytes.Length, out dwWritten);
+
+            if (!writeSuccess || dwWritten != pBytes.Length)
+            {
+                errorCode = Marshal.GetLastWin32Error();
+                Console.WriteLine("WritePrinter failed. Written: " + dwWritten + "/" + pBytes.Length + " Error: " + errorCode);
+            }
+
+            // Ensure proper cleanup with longer delays
+            Thread.Sleep(200); // Wait for data to be sent
+            EndPagePrinter(hPrinter);
+            Thread.Sleep(300); // Longer delay before ending doc
+            EndDocPrinter(hPrinter);
+            Thread.Sleep(500); // Longer delay before closing to let printer process
+            ClosePrinter(hPrinter);
+            hPrinter = IntPtr.Zero;
+            Thread.Sleep(300); // Additional delay after closing
+
+            return writeSuccess && dwWritten == pBytes.Length ? 0 : (errorCode > 0 ? errorCode : 4);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Exception: " + ex.Message);
+            return 99;
         }
         finally
         {
@@ -81,49 +168,74 @@ public class RawPrinterHelper
             {
                 Marshal.FreeCoTaskMem(pUnmanagedBytes);
             }
+            if (hPrinter != IntPtr.Zero)
+            {
+                try { ClosePrinter(hPrinter); } catch { }
+            }
         }
-
-        return bSuccess;
     }
 }
 '@
 
 try {
-    # Compile the C# code
-    Add-Type -TypeDefinition $code -Language CSharp
+    # Check spooler service
+    Reset-PrintSpooler
 
-    # Read data from file or use test data
-    if ($DataFile -and (Test-Path $DataFile)) {
-        $data = [System.IO.File]::ReadAllBytes($DataFile)
-        Write-Host "Read $($data.Length) bytes from $DataFile"
-    } else {
-        # Create test data with ESC/POS commands
-        $ESC = [byte]0x1b
-        $GS = [byte]0x1d
-        $LF = [byte]0x0a
-
-        $data = @()
-        $data += $ESC, 0x40  # ESC @ - Initialize
-        $data += [System.Text.Encoding]::ASCII.GetBytes("TEST PRINT`n")
-        $data += [System.Text.Encoding]::ASCII.GetBytes("================================`n")
-        $data += [System.Text.Encoding]::ASCII.GetBytes("Tanggal: $((Get-Date).ToString())`n")
-        $data += [System.Text.Encoding]::ASCII.GetBytes("Printer: $PrinterName`n")
-        $data += [System.Text.Encoding]::ASCII.GetBytes("================================`n`n")
-        $data += [System.Text.Encoding]::ASCII.GetBytes("Test berhasil!`n`n`n")
-        $data += $GS, 0x56, 0x00  # GS V 0 - Cut paper
-
-        Write-Host "Created test data: $($data.Length) bytes"
+    # Wait for any pending jobs to complete
+    $ready = Wait-PrinterReady -Printer $PrinterName -MaxWaitSeconds 10
+    if (-not $ready) {
+        Write-Host "Printer busy, clearing stuck jobs..."
+        Clear-PrinterJobs -Printer $PrinterName
+        Start-Sleep -Milliseconds 500
     }
 
-    # Send to printer
-    Write-Host "Sending to printer: $PrinterName"
-    $result = [RawPrinterHelper]::SendBytesToPrinter($PrinterName, $data)
+    # Compile the C# code
+    Add-Type -TypeDefinition $code -Language CSharp -ErrorAction SilentlyContinue
 
-    if ($result) {
+    # Read data from file
+    if ($DataFile -and (Test-Path $DataFile)) {
+        $data = [System.IO.File]::ReadAllBytes($DataFile)
+        Write-Host "Read $($data.Length) bytes from file"
+    } else {
+        Write-Output "Error: Data file not found"
+        exit 1
+    }
+
+    # Retry loop
+    $success = $false
+    $lastError = 0
+
+    for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
+        Write-Host "Print attempt $attempt of $MaxRetries..."
+
+        $result = [RawPrinterHelper]::SendBytesToPrinter($PrinterName, $data)
+
+        if ($result -eq 0) {
+            $success = $true
+            Write-Host "Print successful on attempt $attempt"
+            # Wait for printer to finish processing
+            Start-Sleep -Milliseconds 1000
+            break
+        } else {
+            $lastError = $result
+            Write-Host "Attempt $attempt failed with code: $result"
+
+            if ($attempt -lt $MaxRetries) {
+                Write-Host "Waiting before retry..."
+                Start-Sleep -Milliseconds 1500
+
+                # Clear jobs and wait for printer ready before retry
+                Clear-PrinterJobs -Printer $PrinterName
+                Wait-PrinterReady -Printer $PrinterName -MaxWaitSeconds 5 | Out-Null
+            }
+        }
+    }
+
+    if ($success) {
         Write-Output "Print successful"
         exit 0
     } else {
-        Write-Output "Print failed"
+        Write-Output "Print failed after $MaxRetries attempts. Last error: $lastError"
         exit 1
     }
 

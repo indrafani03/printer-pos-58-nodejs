@@ -9,16 +9,41 @@ const path = require('path');
 const os = require('os');
 
 const app = express();
-app.use(express.json({ limit: '10mb' }));  // Increase limit for large receipts
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cors());
 
+// Disable caching untuk semua print endpoints
+app.use('/print', (req, res, next) => {
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0'
+  });
+  next();
+});
+
 // Configuration
 const DEFAULT_PRINTER = 'POS58'; // Nama printer Windows Anda
+const DEBUG_MODE = process.env.DEBUG === 'true' || true; // Set false di production
+const PRINT_COOLDOWN_MS = 2000; // Minimum delay between prints (2 detik)
 let currentPrinter = DEFAULT_PRINTER;
 let availablePrinters = [];
 let autoReconnectEnabled = false; // Default disabled untuk hemat kertas
 let reconnectInterval = null;
+let lastPrintTime = 0; // Track waktu print terakhir
+let isPrinting = false; // Lock untuk mencegah print bersamaan
+
+// Debug logger
+function debugLog(...args) {
+  if (DEBUG_MODE) console.log(...args);
+}
+
+// Escape HTML untuk keamanan
+function escapeHtml(text) {
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+  return text.replace(/[&<>"']/g, m => map[m]);
+}
 
 // ESC/POS Commands (will be converted to text formatting)
 const ESC = '\x1b';
@@ -186,50 +211,121 @@ function stopReconnectMonitor() {
   }
 }
 
-// Function untuk print ke Windows printer menggunakan raw data via Win32 API
-function printToWindowsPrinter(printerName, data) {
-  return new Promise((resolve, reject) => {
-    // Create temp file dengan raw data
-    const tempFile = path.join(os.tmpdir(), `print_${Date.now()}.bin`);
+// Function untuk clear print jobs yang stuck
+function clearPrintJobs(printerName) {
+  return new Promise((resolve) => {
+    exec(`powershell "Get-PrintJob -PrinterName '${printerName}' -ErrorAction SilentlyContinue | Remove-PrintJob -ErrorAction SilentlyContinue"`, {
+      timeout: 5000
+    }, (error, stdout, stderr) => {
+      if (error) {
+        debugLog('Clear jobs note:', error.message);
+      }
+      resolve(); // Always resolve, don't fail if clearing jobs fails
+    });
+  });
+}
 
-    try {
-      // Write binary data to file
-      fs.writeFileSync(tempFile, data, 'binary');
-    } catch (err) {
-      reject(new Error(`Failed to create temp file: ${err.message}`));
-      return;
+// Function untuk print ke Windows printer menggunakan raw data via Win32 API
+function printToWindowsPrinter(printerName, data, retryCount = 0) {
+  const maxRetries = 2; // Additional retries at Node level
+
+  return new Promise(async (resolve, reject) => {
+    // Check if another print is in progress
+    if (isPrinting) {
+      console.log('⏳ Another print in progress, waiting...');
+      // Wait for current print to finish
+      let waitCount = 0;
+      while (isPrinting && waitCount < 30) { // Max 30 seconds wait
+        await new Promise(r => setTimeout(r, 1000));
+        waitCount++;
+      }
+      if (isPrinting) {
+        reject(new Error('Print timeout: previous print still in progress'));
+        return;
+      }
     }
 
-    // Use the raw_print.ps1 script
-    const rawPrintScript = path.join(__dirname, 'raw_print.ps1');
+    // Enforce cooldown between prints
+    const now = Date.now();
+    const timeSinceLastPrint = now - lastPrintTime;
+    if (timeSinceLastPrint < PRINT_COOLDOWN_MS && lastPrintTime > 0) {
+      const waitTime = PRINT_COOLDOWN_MS - timeSinceLastPrint;
+      console.log(`⏳ Cooldown: waiting ${waitTime}ms before next print...`);
+      await new Promise(r => setTimeout(r, waitTime));
+    }
 
-    // Execute PowerShell raw printing
-    exec(`powershell -ExecutionPolicy Bypass -File "${rawPrintScript}" -PrinterName "${printerName}" -DataFile "${tempFile}"`, {
-      timeout: 30000
-    }, (error, stdout, stderr) => {
-      // Cleanup
+    // Set printing lock
+    isPrinting = true;
+
+    try {
+      // Clear any stuck jobs before printing
+      await clearPrintJobs(printerName);
+
+      // Create temp file dengan raw data
+      const tempFile = path.join(os.tmpdir(), `print_${Date.now()}.bin`);
+
       try {
-        if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
-      } catch (e) {
-        console.log('Cleanup warning:', e.message);
-      }
-
-      if (error) {
-        console.error('Print error:', error.message);
-        console.error('stderr:', stderr);
-        reject(new Error(`Print failed: ${error.message}`));
+        // Write binary data to file
+        fs.writeFileSync(tempFile, data, 'binary');
+      } catch (err) {
+        isPrinting = false;
+        reject(new Error(`Failed to create temp file: ${err.message}`));
         return;
       }
 
-      if (stdout.includes('Print successful')) {
-        console.log('Print completed successfully');
-        resolve('Print successful');
-      } else {
-        console.error('Print output:', stdout);
-        console.error('Print stderr:', stderr);
-        reject(new Error(`Print failed: ${stderr || 'Unknown error'}`));
-      }
-    });
+      // Use the raw_print.ps1 script
+      const rawPrintScript = path.join(__dirname, 'raw_print.ps1');
+
+      debugLog(`Sending print job to ${printerName}...`);
+
+      // Execute PowerShell raw printing with retries built-in
+      exec(`powershell -ExecutionPolicy Bypass -File "${rawPrintScript}" -PrinterName "${printerName}" -DataFile "${tempFile}" -MaxRetries 3`, {
+        timeout: 45000 // Increased timeout for retries
+      }, async (error, stdout, stderr) => {
+        // Cleanup temp file
+        try {
+          if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+        } catch (e) {
+          debugLog('Cleanup warning:', e.message);
+        }
+
+        const output = stdout + stderr;
+        debugLog('Print output:', output);
+
+        if (output.includes('Print successful')) {
+          console.log('✅ Print completed successfully');
+          lastPrintTime = Date.now();
+          isPrinting = false;
+
+          // Extra delay to let printer finish physically
+          await new Promise(r => setTimeout(r, 500));
+          resolve('Print successful');
+        } else if (error || !output.includes('Print successful')) {
+          console.error('❌ Print failed:', output);
+
+          // Retry at Node level if PowerShell retries also failed
+          if (retryCount < maxRetries) {
+            console.log(`🔄 Retrying at Node level (${retryCount + 1}/${maxRetries})...`);
+            isPrinting = false; // Release lock for retry
+            await clearPrintJobs(printerName);
+            await new Promise(r => setTimeout(r, 2000)); // Wait before retry
+
+            try {
+              const result = await printToWindowsPrinter(printerName, data, retryCount + 1);
+              resolve(result);
+            } catch (retryError) {
+              reject(retryError);
+            }
+          } else {
+            isPrinting = false;
+            reject(new Error(`Print failed after all retries. Output: ${output.substring(0, 200)}`));
+          }
+        }
+      });
+    } catch (err) {
+      isPrinting = false;
+      reject(err);
+    }
   });
 }
 
@@ -577,14 +673,32 @@ app.post('/printer/connect', (req, res) => {
 });
 
 // Get printer status
-app.get('/printer/status', (req, res) => {
+app.get('/printer/status', async (req, res) => {
+  // Check for pending print jobs
+  let pendingJobs = 0;
+  try {
+    const result = await new Promise((resolve) => {
+      exec(`powershell "(Get-PrintJob -PrinterName '${currentPrinter}' -ErrorAction SilentlyContinue | Measure-Object).Count"`, {
+        timeout: 3000
+      }, (error, stdout) => {
+        resolve(error ? 0 : parseInt(stdout.trim()) || 0);
+      });
+    });
+    pendingJobs = result;
+  } catch (e) {
+    pendingJobs = 0;
+  }
+
   res.json({
     success: true,
     connected: true,
     port: currentPrinter,
     availablePrinters: availablePrinters,
     autoReconnectEnabled: autoReconnectEnabled,
-    isMonitoring: reconnectInterval !== null
+    isMonitoring: reconnectInterval !== null,
+    isPrinting: isPrinting,
+    pendingJobs: pendingJobs,
+    lastPrintTime: lastPrintTime > 0 ? new Date(lastPrintTime).toISOString() : null
   });
 });
 
@@ -603,6 +717,50 @@ app.post('/printer/rescan', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Rescan failed',
+      error: error.message
+    });
+  }
+});
+
+// Clear stuck print jobs
+app.post('/printer/clear-jobs', async (req, res) => {
+  try {
+    console.log('🧹 Clearing print jobs for:', currentPrinter);
+    await clearPrintJobs(currentPrinter);
+
+    res.json({
+      success: true,
+      message: `Print jobs cleared for ${currentPrinter}`
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to clear print jobs',
+      error: error.message
+    });
+  }
+});
+
+// Reset printer (clear jobs + send init command)
+app.post('/printer/reset', async (req, res) => {
+  try {
+    console.log('🔄 Resetting printer:', currentPrinter);
+
+    // Clear stuck jobs
+    await clearPrintJobs(currentPrinter);
+
+    // Send ESC/POS init command to reset printer
+    const initCommand = commands.INIT + commands.FEED_LINE;
+    await printToWindowsPrinter(currentPrinter, initCommand);
+
+    res.json({
+      success: true,
+      message: `Printer ${currentPrinter} has been reset`
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to reset printer',
       error: error.message
     });
   }
@@ -680,37 +838,46 @@ app.post('/print/test', async (req, res) => {
 
 // Print receipt - GET method
 app.get('/print/receipt', async (req, res) => {
+  const requestId = Date.now(); // Untuk tracking request
+
   try {
-    let receiptData = req.query;
-    if (req.query.data) {
-      try {
-        receiptData = JSON.parse(decodeURIComponent(req.query.data));
-      } catch (parseError) {
-        console.error("Failed to parse JSON data:", parseError.message);
-        throw new Error("Invalid JSON data in query parameter");
-      }
+    debugLog(`\n📄 [${requestId}] ========== RECEIPT REQUEST ==========`);
+    debugLog(`[${requestId}] Data param exists:`, !!req.query.data);
+    debugLog(`[${requestId}] Data length:`, req.query.data?.length || 0);
+
+    // Parse receipt data
+    let receiptData;
+
+    if (!req.query.data) {
+      throw new Error("Parameter 'data' tidak ditemukan di URL");
     }
 
-    // Debug logging
-    console.log('\n📄 Receipt request received:');
-    console.log('Raw query:', JSON.stringify(req.query).substring(0, 200));
+    try {
+      const decodedData = decodeURIComponent(req.query.data);
+      receiptData = JSON.parse(decodedData);
+    } catch (parseError) {
+      console.error(`[${requestId}] ❌ JSON parse error:`, parseError.message);
+      throw new Error("Format JSON tidak valid. Pastikan data di-encode dengan benar.");
+    }
 
-    // Extract items for validation
+    // Extract dan validasi
     const dataToCheck = receiptData.receiptData || receiptData;
     const items = dataToCheck.items || [];
+    const totalAmount = dataToCheck.totalAmount || dataToCheck.total || 0;
 
-    console.log('Items count:', items.length);
-    console.log('Total amount:', dataToCheck.totalAmount || dataToCheck.total || 0);
+    debugLog(`[${requestId}] Items: ${items.length}, Total: ${totalAmount}`);
 
-    // Validate: jika items kosong dan tidak ada total, kemungkinan data tidak terparsing
-    if (items.length === 0 && !dataToCheck.totalAmount && !dataToCheck.total) {
-      console.error('⚠️  WARNING: Empty receipt data detected!');
-      console.error('Full received data:', JSON.stringify(receiptData));
-      throw new Error("Data receipt kosong. Silakan coba lagi.");
+    // Validasi data tidak kosong
+    if (items.length === 0 && totalAmount === 0) {
+      console.error(`[${requestId}] ⚠️ Empty data! Keys:`, Object.keys(dataToCheck));
+      throw new Error("Data receipt kosong. Pastikan items dan total terisi.");
     }
 
+    // Print
     const receiptText = createReceiptText(receiptData);
     await printToWindowsPrinter(currentPrinter, receiptText);
+
+    debugLog(`[${requestId}] ✅ Print success`);
 
     res.send(`
       <!DOCTYPE html>
@@ -741,8 +908,10 @@ app.get('/print/receipt', async (req, res) => {
       </html>
     `);
   } catch (error) {
-    console.error("Print error:", error);
-    res.send(`
+    console.error("Print error:", error.message);
+    const safeMessage = escapeHtml(error.message);
+
+    res.status(400).send(`
       <!DOCTYPE html>
       <html>
       <head>
@@ -752,11 +921,16 @@ app.get('/print/receipt', async (req, res) => {
           body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
           .error { color: #f44336; font-size: 20px; margin-bottom: 15px; }
           .message { color: #666; font-size: 14px; margin-bottom: 15px; }
+          .retry { margin-top: 20px; }
+          .retry button { padding: 10px 20px; font-size: 14px; cursor: pointer; }
         </style>
       </head>
       <body>
         <div class="error">❌ Print gagal!</div>
-        <div class="message">${error.message}</div>
+        <div class="message">${safeMessage}</div>
+        <div class="retry">
+          <button onclick="location.reload()">Coba Lagi</button>
+        </div>
         <script>
           setTimeout(() => {
             if (window.opener) {
@@ -765,7 +939,7 @@ app.get('/print/receipt', async (req, res) => {
             } else {
               window.close();
             }
-          }, 3000);
+          }, 5000);
         </script>
       </body>
       </html>
@@ -935,16 +1109,18 @@ app.listen(PORT, async () => {
   console.log("POST /printer/connect - Manually set active printer");
   console.log("POST /printer/rescan - Rescan and auto-connect to printer");
   console.log("GET  /printer/status - Check printer status");
+  console.log("POST /printer/clear-jobs - Clear stuck print jobs");
+  console.log("POST /printer/reset - Reset printer (clear jobs + init)");
   console.log("POST /printer/auto-reconnect - Enable/disable auto-reconnect");
   console.log("GET  /print/receipt - Print receipt (via URL query)");
-  console.log("POST /print/receipt - Print receipt (via JSON body - RECOMMENDED)");
+  console.log("POST /print/receipt - Print receipt (via JSON body)");
   console.log("GET  /print/qc - Print QC label");
   console.log("POST /print/test - Test print");
   console.log("POST /print/text - Print simple text");
-  console.log("\n✅ This version uses Windows Print Spooler with Win32 API");
+  console.log("\n✅ Windows Print Spooler with Win32 API");
   console.log("✅ Works with USB printers on CP ports");
-  console.log("✅ No COM port required!");
-  console.log("✅ Auto-scan and auto-connect on startup");
+  console.log("✅ Auto-retry on print failure (3 attempts)");
+  console.log("✅ Auto-clear stuck print jobs");
   console.log("✅ Auto-reconnect monitoring (30s interval)");
 
   // Auto-connect on startup
