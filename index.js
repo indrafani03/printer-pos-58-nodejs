@@ -9,7 +9,8 @@ const path = require('path');
 const os = require('os');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));  // Increase limit for large receipts
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cors());
 
 // Configuration
@@ -690,6 +691,24 @@ app.get('/print/receipt', async (req, res) => {
       }
     }
 
+    // Debug logging
+    console.log('\n📄 Receipt request received:');
+    console.log('Raw query:', JSON.stringify(req.query).substring(0, 200));
+
+    // Extract items for validation
+    const dataToCheck = receiptData.receiptData || receiptData;
+    const items = dataToCheck.items || [];
+
+    console.log('Items count:', items.length);
+    console.log('Total amount:', dataToCheck.totalAmount || dataToCheck.total || 0);
+
+    // Validate: jika items kosong dan tidak ada total, kemungkinan data tidak terparsing
+    if (items.length === 0 && !dataToCheck.totalAmount && !dataToCheck.total) {
+      console.error('⚠️  WARNING: Empty receipt data detected!');
+      console.error('Full received data:', JSON.stringify(receiptData));
+      throw new Error("Data receipt kosong. Silakan coba lagi.");
+    }
+
     const receiptText = createReceiptText(receiptData);
     await printToWindowsPrinter(currentPrinter, receiptText);
 
@@ -831,6 +850,50 @@ app.get('/print/qc', async (req, res) => {
   }
 });
 
+// Print receipt - POST method (more reliable for large data)
+app.post('/print/receipt', async (req, res) => {
+  try {
+    const receiptData = req.body;
+
+    // Debug logging
+    console.log('\n📄 POST Receipt request received:');
+    console.log('Content-Type:', req.headers['content-type']);
+
+    // Extract items for validation
+    const dataToCheck = receiptData.receiptData || receiptData;
+    const items = dataToCheck.items || [];
+
+    console.log('Items count:', items.length);
+    console.log('Total amount:', dataToCheck.totalAmount || dataToCheck.total || 0);
+
+    // Validate
+    if (items.length === 0 && !dataToCheck.totalAmount && !dataToCheck.total) {
+      console.error('⚠️  WARNING: Empty receipt data detected!');
+      console.error('Full received data:', JSON.stringify(receiptData));
+      return res.status(400).json({
+        success: false,
+        message: "Data receipt kosong. Pastikan data dikirim dengan benar."
+      });
+    }
+
+    const receiptText = createReceiptText(receiptData);
+    await printToWindowsPrinter(currentPrinter, receiptText);
+
+    res.json({
+      success: true,
+      message: "Receipt printed successfully",
+      itemsCount: items.length
+    });
+  } catch (error) {
+    console.error("Print error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Receipt print failed",
+      error: error.message
+    });
+  }
+});
+
 // Print text only
 app.post('/print/text', async (req, res) => {
   try {
@@ -873,7 +936,8 @@ app.listen(PORT, async () => {
   console.log("POST /printer/rescan - Rescan and auto-connect to printer");
   console.log("GET  /printer/status - Check printer status");
   console.log("POST /printer/auto-reconnect - Enable/disable auto-reconnect");
-  console.log("GET  /print/receipt - Print receipt");
+  console.log("GET  /print/receipt - Print receipt (via URL query)");
+  console.log("POST /print/receipt - Print receipt (via JSON body - RECOMMENDED)");
   console.log("GET  /print/qc - Print QC label");
   console.log("POST /print/test - Test print");
   console.log("POST /print/text - Print simple text");
