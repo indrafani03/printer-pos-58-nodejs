@@ -423,19 +423,37 @@ function createReceiptText(data) {
     const name = cleanText(item.name || "").substring(0, 28);
     const qty = parseInt(item.quantity || item.qty || 0);
     const price = item.price || 0;
-    const itemSubtotal = price * qty;
     const stockType = (item.stockType || "").toUpperCase();
     const ukuran = item.ukuran || "";
-    const itemTotal = item.total || itemSubtotal;
+    const dimensions = item.dimensions || null;
+    // Untuk AREA/METERAN, gunakan item.total karena sudah dikalikan dengan area/panjang
+    const itemTotal = item.total || (price * qty);
 
     receipt += name + commands.NEW_LINE;
 
     // Tampilkan ukuran jika stockType adalah AREA atau METERAN
-    if ((stockType === "AREA" || stockType === "METERAN") && ukuran) {
-      receipt += `  Ukuran: ${cleanText(ukuran)}` + commands.NEW_LINE;
+    if (stockType === "AREA" && ukuran) {
+      const area = dimensions ? dimensions.area : null;
+      if (area) {
+        receipt += `  ${cleanText(ukuran)} (${area}m2)` + commands.NEW_LINE;
+        receipt += formatLine(`  ${formatRupiah(price)}/m2 x ${area}`, formatRupiah(itemTotal)) + commands.NEW_LINE;
+      } else {
+        receipt += `  Ukuran: ${cleanText(ukuran)}` + commands.NEW_LINE;
+        receipt += formatLine(`  ${qty} x ${formatRupiah(price)}`, formatRupiah(itemTotal)) + commands.NEW_LINE;
+      }
+    } else if (stockType === "METERAN" && ukuran) {
+      const length = item.meterLength || (dimensions ? dimensions.length : null);
+      if (length) {
+        receipt += `  Panjang: ${length}m` + commands.NEW_LINE;
+        receipt += formatLine(`  ${formatRupiah(price)}/m x ${length}`, formatRupiah(itemTotal)) + commands.NEW_LINE;
+      } else {
+        receipt += `  Ukuran: ${cleanText(ukuran)}` + commands.NEW_LINE;
+        receipt += formatLine(`  ${qty} x ${formatRupiah(price)}`, formatRupiah(itemTotal)) + commands.NEW_LINE;
+      }
+    } else {
+      // Untuk produk non-AREA/METERAN, gunakan qty x price
+      receipt += formatLine(`  ${qty} x ${formatRupiah(price)}`, formatRupiah(itemTotal)) + commands.NEW_LINE;
     }
-
-    receipt += formatLine(`  ${qty} x ${formatRupiah(price)}`, formatRupiah(itemSubtotal)) + commands.NEW_LINE;
 
     let finishingTotal = 0;
     if (item.finishings && Array.isArray(item.finishings) && item.finishings.length > 0) {
@@ -454,9 +472,9 @@ function createReceiptText(data) {
       receipt += `    Note: ${notes}` + commands.NEW_LINE;
     }
 
-    // Tampilkan total item (dari item.total atau kalkulasi)
-    const finalItemTotal = itemTotal + finishingTotal;
-    if (finishingTotal > 0 || itemTotal !== itemSubtotal) {
+    // Tampilkan total item jika ada finishing
+    if (finishingTotal > 0) {
+      const finalItemTotal = itemTotal + finishingTotal;
       receipt += formatLine("  Total item:", formatRupiah(finalItemTotal)) + commands.NEW_LINE;
     }
   });
