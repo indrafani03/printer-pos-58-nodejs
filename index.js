@@ -424,8 +424,17 @@ function createReceiptText(data) {
     const qty = parseInt(item.quantity || item.qty || 0);
     const price = item.price || 0;
     const itemSubtotal = price * qty;
+    const stockType = (item.stockType || "").toUpperCase();
+    const ukuran = item.ukuran || "";
+    const itemTotal = item.total || itemSubtotal;
 
     receipt += name + commands.NEW_LINE;
+
+    // Tampilkan ukuran jika stockType adalah AREA atau METERAN
+    if ((stockType === "AREA" || stockType === "METERAN") && ukuran) {
+      receipt += `  Ukuran: ${cleanText(ukuran)}` + commands.NEW_LINE;
+    }
+
     receipt += formatLine(`  ${qty} x ${formatRupiah(price)}`, formatRupiah(itemSubtotal)) + commands.NEW_LINE;
 
     let finishingTotal = 0;
@@ -445,9 +454,10 @@ function createReceiptText(data) {
       receipt += `    Note: ${notes}` + commands.NEW_LINE;
     }
 
-    if (finishingTotal > 0) {
-      const itemTotal = itemSubtotal + finishingTotal;
-      receipt += formatLine("  Subtotal item:", formatRupiah(itemTotal)) + commands.NEW_LINE;
+    // Tampilkan total item (dari item.total atau kalkulasi)
+    const finalItemTotal = itemTotal + finishingTotal;
+    if (finishingTotal > 0 || itemTotal !== itemSubtotal) {
+      receipt += formatLine("  Total item:", formatRupiah(finalItemTotal)) + commands.NEW_LINE;
     }
   });
 
