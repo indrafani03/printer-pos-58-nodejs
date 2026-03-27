@@ -446,8 +446,13 @@ function createReceiptText(data) {
   receipt += commands.ALIGN_LEFT;
   receipt += commands.NEW_LINE;
 
-  // Transaction info
-  receipt += "Tanggal: " + cleanText(paymentDate || new Date().toLocaleString('id-ID')) + commands.NEW_LINE;
+  // Transaction info — selalu gunakan local datetime saat cetak
+  const printDate = new Date().toLocaleString('id-ID', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false
+  });
+  receipt += "Tanggal: " + cleanText(printDate) + commands.NEW_LINE;
   if (receiptNumber) receipt += "No. Struk: " + cleanText(receiptNumber) + commands.NEW_LINE;
   if (orderNumber) receipt += "No. Order: " + cleanText(orderNumber) + commands.NEW_LINE;
   if (cashierName || cashier) receipt += "Kasir: " + cleanText(cashierName || cashier) + commands.NEW_LINE;
