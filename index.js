@@ -27,12 +27,52 @@ app.use('/print', (req, res, next) => {
 const DEFAULT_PRINTER = 'POS58'; // Nama printer Windows Anda
 const DEBUG_MODE = process.env.DEBUG === 'true' || true; // Set false di production
 const PRINT_COOLDOWN_MS = 500; // Minimum delay between prints (0.5 detik)
+const CONFIG_FILE = path.join(__dirname, 'printer_config.json');
 let currentPrinter = DEFAULT_PRINTER;
 let availablePrinters = [];
 let autoReconnectEnabled = false; // Default disabled untuk hemat kertas
 let reconnectInterval = null;
 let lastPrintTime = 0; // Track waktu print terakhir
 let isPrinting = false; // Lock untuk mencegah print bersamaan
+
+// Load config dari file (dipanggil saat startup)
+function loadConfig() {
+  try {
+    if (fs.existsSync(CONFIG_FILE)) {
+      const raw = fs.readFileSync(CONFIG_FILE, 'utf8');
+      const cfg = JSON.parse(raw);
+      if (cfg.currentPrinter) {
+        currentPrinter = cfg.currentPrinter;
+        console.log(`📂 Config loaded: printer = "${currentPrinter}"`);
+      }
+      if (typeof cfg.autoReconnectEnabled === 'boolean') {
+        autoReconnectEnabled = cfg.autoReconnectEnabled;
+      }
+    } else {
+      console.log(`📂 No config file found, using default printer: "${DEFAULT_PRINTER}"`);
+    }
+  } catch (e) {
+    console.error('⚠️  Failed to load config:', e.message);
+  }
+}
+
+// Simpan config ke file
+function saveConfig() {
+  try {
+    const cfg = {
+      currentPrinter,
+      autoReconnectEnabled,
+      savedAt: new Date().toISOString()
+    };
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8');
+    console.log(`💾 Config saved: printer = "${currentPrinter}"`);
+  } catch (e) {
+    console.error('⚠️  Failed to save config:', e.message);
+  }
+}
+
+// Load config saat modul pertama kali dijalankan
+loadConfig();
 
 // Debug logger
 function debugLog(...args) {
@@ -83,10 +123,10 @@ function scanPrinters() {
 
           // Prioritas printer thermal (POS, thermal, ESC/POS)
           return name.includes('pos') ||
-                 name.includes('thermal') ||
-                 driver.includes('pos') ||
-                 driver.includes('thermal') ||
-                 port.includes('cp');  // CP ports untuk USB thermal printers
+            name.includes('thermal') ||
+            driver.includes('pos') ||
+            driver.includes('thermal') ||
+            port.includes('cp');  // CP ports untuk USB thermal printers
         });
 
         // Jika tidak ada printer thermal, return semua printer normal
@@ -658,6 +698,669 @@ function createQCLabelText(data) {
 // API ENDPOINTS
 // ===========================================
 
+// Printer Management UI
+app.get('/printer/ui', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Printer Manager</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #21253a;
+      --border: #2d3147;
+      --accent: #6c63ff;
+      --accent-hover: #5a52e8;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --text: #e2e8f0;
+      --text-muted: #8892a4;
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px 16px;
+    }
+
+    .container { max-width: 720px; margin: 0 auto; }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 28px;
+    }
+    .header-icon {
+      width: 44px; height: 44px;
+      background: linear-gradient(135deg, var(--accent), #a78bfa);
+      border-radius: var(--radius-sm);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px;
+      flex-shrink: 0;
+    }
+    .header h1 { font-size: 20px; font-weight: 700; }
+    .header p { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+
+    /* Status Bar */
+    .status-bar {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .status-left { display: flex; align-items: center; gap: 12px; }
+    .status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      flex-shrink: 0;
+      transition: background .3s;
+    }
+    .status-dot.connected { background: var(--success); box-shadow: 0 0 8px var(--success); }
+    .status-dot.error { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+    .status-info strong { font-size: 14px; }
+    .status-info span { font-size: 12px; color: var(--text-muted); display: block; margin-top: 1px; }
+    .status-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+    .badge {
+      font-size: 11px; font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+    .badge.on { border-color: var(--success); color: var(--success); background: rgba(34,197,94,.1); }
+    .badge.busy { border-color: var(--warning); color: var(--warning); background: rgba(245,158,11,.1); }
+
+    /* Section */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+    .section-header {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .section-header h2 { font-size: 14px; font-weight: 600; }
+    .section-body { padding: 16px 20px; }
+
+    /* Printer List */
+    .printer-list { display: flex; flex-direction: column; gap: 10px; }
+    .printer-card {
+      background: var(--surface2);
+      border: 2px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    .printer-card:hover { border-color: var(--accent); background: rgba(108,99,255,.07); }
+    .printer-card.active {
+      border-color: var(--accent);
+      background: rgba(108,99,255,.12);
+    }
+    .printer-card.active .printer-radio { background: var(--accent); border-color: var(--accent); }
+    .printer-card.active .printer-radio::after { opacity: 1; }
+    .printer-radio {
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      transition: all .2s;
+      position: relative;
+    }
+    .printer-radio::after {
+      content: '';
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #fff;
+      opacity: 0;
+      transition: opacity .2s;
+    }
+    .printer-icon { font-size: 24px; flex-shrink: 0; }
+    .printer-details { flex: 1; min-width: 0; }
+    .printer-name {
+      font-size: 14px; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .printer-meta {
+      font-size: 12px; color: var(--text-muted);
+      margin-top: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .printer-tag {
+      font-size: 10px; font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+    .printer-tag.active { background: rgba(108,99,255,.2); color: #a78bfa; }
+    .printer-tag.available { background: rgba(34,197,94,.15); color: var(--success); }
+
+    /* Empty state */
+    .empty {
+      text-align: center;
+      padding: 32px 16px;
+      color: var(--text-muted);
+    }
+    .empty .empty-icon { font-size: 40px; margin-bottom: 10px; }
+    .empty p { font-size: 13px; line-height: 1.6; }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 9px 18px;
+      border-radius: var(--radius-sm);
+      border: none;
+      cursor: pointer;
+      transition: all .2s;
+      font-family: inherit;
+      white-space: nowrap;
+    }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover:not(:disabled) { color: var(--text); border-color: var(--text-muted); }
+    .btn-danger {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid rgba(239,68,68,.3);
+    }
+    .btn-danger:hover:not(:disabled) { background: rgba(239,68,68,.1); }
+    .btn-success {
+      background: transparent;
+      color: var(--success);
+      border: 1px solid rgba(34,197,94,.3);
+    }
+    .btn-success:hover:not(:disabled) { background: rgba(34,197,94,.1); }
+    .btn-sm { padding: 6px 12px; font-size: 12px; }
+
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    /* Actions panel */
+    .actions-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 10px;
+    }
+    .action-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 14px 12px;
+      text-align: center;
+      cursor: pointer;
+      transition: all .2s;
+      font-family: inherit;
+      color: var(--text);
+    }
+    .action-btn:hover:not(:disabled) { border-color: var(--accent); background: rgba(108,99,255,.08); }
+    .action-btn:disabled { opacity: .4; cursor: not-allowed; }
+    .action-btn .action-icon { font-size: 22px; margin-bottom: 6px; }
+    .action-btn .action-label { font-size: 12px; font-weight: 600; }
+    .action-btn .action-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+    /* Log */
+    .log-box {
+      background: #0d0f17;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 14px;
+      font-family: 'Consolas', monospace;
+      font-size: 12px;
+      line-height: 1.7;
+      max-height: 200px;
+      overflow-y: auto;
+      color: var(--text-muted);
+    }
+    .log-box .log-line { padding: 1px 0; }
+    .log-box .ok { color: #4ade80; }
+    .log-box .err { color: #f87171; }
+    .log-box .info { color: #60a5fa; }
+    .log-box .warn { color: #fbbf24; }
+
+    /* Toast */
+    #toast-container {
+      position: fixed;
+      bottom: 20px; right: 20px;
+      display: flex; flex-direction: column; gap: 8px;
+      z-index: 999;
+    }
+    .toast {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 18px;
+      font-size: 13px;
+      display: flex; align-items: center; gap: 10px;
+      animation: slide-in .25s ease;
+      min-width: 240px;
+      max-width: 340px;
+    }
+    .toast.success { border-color: var(--success); }
+    .toast.error { border-color: var(--danger); }
+    @keyframes slide-in {
+      from { transform: translateX(30px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    /* Spinner */
+    .spin {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-icon">🖨️</div>
+    <div>
+      <h1>Printer Manager</h1>
+      <p>Kelola koneksi dan pengaturan printer thermal</p>
+    </div>
+  </div>
+
+  <!-- Status Bar -->
+  <div class="status-bar">
+    <div class="status-left">
+      <div class="status-dot" id="statusDot"></div>
+      <div class="status-info">
+        <strong id="statusPrinter">Memuat...</strong>
+        <span id="statusSub">Mengambil status printer...</span>
+      </div>
+    </div>
+    <div class="status-badges">
+      <span class="badge" id="badgeJobs">0 jobs</span>
+      <span class="badge" id="badgePrinting">Idle</span>
+      <span class="badge" id="badgeMonitor">Monitor: off</span>
+    </div>
+  </div>
+
+  <!-- Printer Selection -->
+  <div class="section">
+    <div class="section-header">
+      <h2>🖨️ Pilih Printer Aktif</h2>
+      <div class="btn-row">
+        <button class="btn btn-ghost btn-sm" onclick="rescanPrinters()" id="btnRescan">
+          🔍 Scan Ulang
+        </button>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="printer-list" id="printerList">
+        <div class="empty">
+          <div class="empty-icon">🔍</div>
+          <p>Memuat daftar printer...</p>
+        </div>
+      </div>
+      <hr class="divider">
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="setActivePrinter()" id="btnSet" disabled>
+          ✅ Terapkan Pilihan
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="section">
+    <div class="section-header">
+      <h2>⚡ Aksi Cepat</h2>
+    </div>
+    <div class="section-body">
+      <div class="actions-grid">
+        <button class="action-btn" onclick="testPrint()">
+          <div class="action-icon">🧾</div>
+          <div class="action-label">Test Print</div>
+          <div class="action-desc">Cetak halaman uji</div>
+        </button>
+        <button class="action-btn" onclick="clearJobs()">
+          <div class="action-icon">🧹</div>
+          <div class="action-label">Clear Jobs</div>
+          <div class="action-desc">Hapus antrian print</div>
+        </button>
+        <button class="action-btn" onclick="resetPrinter()">
+          <div class="action-icon">🔄</div>
+          <div class="action-label">Reset</div>
+          <div class="action-desc">Reset &amp; init printer</div>
+        </button>
+        <button class="action-btn" onclick="toggleMonitor()" id="btnMonitor">
+          <div class="action-icon">📡</div>
+          <div class="action-label">Auto Monitor</div>
+          <div class="action-desc" id="monitorDesc">Aktifkan monitoring</div>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="section">
+    <div class="section-header">
+      <h2>📋 Log Aktivitas</h2>
+      <button class="btn btn-ghost btn-sm" onclick="clearLog()">Bersihkan</button>
+    </div>
+    <div class="section-body" style="padding-top:0">
+      <div class="log-box" id="logBox">
+        <div class="log-line info">🚀 Printer Manager siap.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+  const BASE = window.location.origin;
+  let selectedPrinter = null;
+  let currentActivePrinter = null;
+  let monitorEnabled = false;
+
+  // ── Logging ──────────────────────────────────────────
+  function addLog(msg, type = 'info') {
+    const box = document.getElementById('logBox');
+    const line = document.createElement('div');
+    line.className = 'log-line ' + type;
+    const time = new Date().toLocaleTimeString('id-ID');
+    line.textContent = '[' + time + '] ' + msg;
+    box.appendChild(line);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function clearLog() {
+    document.getElementById('logBox').innerHTML = '';
+    addLog('Log dibersihkan.', 'info');
+  }
+
+  // ── Toast ─────────────────────────────────────────────
+  function toast(msg, type = 'info') {
+    const icons = { success: '✅', error: '❌', info: 'ℹ️', warn: '⚠️' };
+    const el = document.createElement('div');
+    el.className = 'toast ' + (type === 'success' ? 'success' : type === 'error' ? 'error' : '');
+    el.innerHTML = '<span>' + (icons[type] || 'ℹ️') + '</span><span>' + msg + '</span>';
+    document.getElementById('toast-container').appendChild(el);
+    setTimeout(() => el.remove(), 3500);
+  }
+
+  // ── Status ────────────────────────────────────────────
+  async function refreshStatus() {
+    try {
+      const r = await fetch(BASE + '/printer/status');
+      const d = await r.json();
+      currentActivePrinter = d.port;
+      monitorEnabled = d.autoReconnectEnabled;
+
+      // Dot
+      const dot = document.getElementById('statusDot');
+      dot.className = 'status-dot ' + (d.connected ? 'connected' : 'error');
+
+      document.getElementById('statusPrinter').textContent = d.port || 'Tidak ada printer';
+      document.getElementById('statusSub').textContent = d.connected ? 'Printer aktif' : 'Tidak terhubung';
+
+      // Badges
+      document.getElementById('badgeJobs').textContent = (d.pendingJobs || 0) + ' jobs';
+      const badgePrint = document.getElementById('badgePrinting');
+      if (d.isPrinting) {
+        badgePrint.textContent = 'Mencetak...';
+        badgePrint.className = 'badge busy';
+      } else {
+        badgePrint.textContent = 'Idle';
+        badgePrint.className = 'badge';
+      }
+      const badgeMon = document.getElementById('badgeMonitor');
+      if (d.isMonitoring) {
+        badgeMon.textContent = 'Monitor: on';
+        badgeMon.className = 'badge on';
+      } else {
+        badgeMon.textContent = 'Monitor: off';
+        badgeMon.className = 'badge';
+      }
+
+      // Monitor button desc
+      document.getElementById('monitorDesc').textContent = monitorEnabled ? 'Nonaktifkan' : 'Aktifkan monitoring';
+
+      // Update available printers if returned
+      if (d.availablePrinters && d.availablePrinters.length > 0) {
+        renderPrinterList(d.availablePrinters, d.port);
+      }
+    } catch (e) {
+      document.getElementById('statusPrinter').textContent = 'Error';
+      document.getElementById('statusSub').textContent = 'Tidak bisa terhubung ke server';
+      document.getElementById('statusDot').className = 'status-dot error';
+    }
+  }
+
+  // ── Printer List ──────────────────────────────────────
+  function renderPrinterList(printers, active) {
+    const list = document.getElementById('printerList');
+
+    if (!printers || printers.length === 0) {
+      list.innerHTML = '<div class="empty"><div class="empty-icon">🔌</div><p>Tidak ada printer ditemukan.<br>Pastikan printer terhubung lalu klik <strong>Scan Ulang</strong>.</p></div>';
+      document.getElementById('btnSet').disabled = true;
+      return;
+    }
+
+    list.innerHTML = printers.map(p => {
+      const isActive = (p.name || p.path) === active;
+      const printerName = p.name || p.path || 'Unknown';
+      const meta = [p.port, p.driver].filter(Boolean).join(' · ') || 'Windows Printer';
+      return \`<div class="printer-card \${isActive ? 'active' : ''}" onclick="selectPrinter('\${escHtml(printerName)}', this)" data-name="\${escHtml(printerName)}">
+        <div class="printer-radio"></div>
+        <div class="printer-icon">🖨️</div>
+        <div class="printer-details">
+          <div class="printer-name">\${escHtml(printerName)}</div>
+          <div class="printer-meta">\${escHtml(meta)}</div>
+        </div>
+        \${isActive ? '<span class="printer-tag active">AKTIF</span>' : '<span class="printer-tag available">Tersedia</span>'}
+      </div>\`;
+    }).join('');
+
+    // Pre-select the active printer
+    if (active) {
+      selectedPrinter = active;
+      document.getElementById('btnSet').disabled = false;
+    }
+  }
+
+  function escHtml(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function selectPrinter(name, el) {
+    selectedPrinter = name;
+    document.querySelectorAll('.printer-card').forEach(c => c.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('btnSet').disabled = false;
+    addLog('Dipilih: ' + name, 'info');
+  }
+
+  // ── Actions ───────────────────────────────────────────
+  async function rescanPrinters() {
+    const btn = document.getElementById('btnRescan');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span> Scanning...';
+    addLog('Memulai scan printer...', 'info');
+
+    try {
+      const r = await fetch(BASE + '/printer/rescan', { method: 'POST' });
+      const d = await r.json();
+      addLog(d.message, d.success ? 'ok' : 'warn');
+      if (d.availablePrinters) renderPrinterList(d.availablePrinters, d.currentPrinter);
+      if (d.success) toast('Printer ditemukan: ' + d.currentPrinter, 'success');
+      else toast('Tidak ada printer ditemukan', 'warn');
+      await refreshStatus();
+    } catch (e) {
+      addLog('Scan gagal: ' + e.message, 'err');
+      toast('Scan gagal', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '🔍 Scan Ulang';
+    }
+  }
+
+  async function setActivePrinter() {
+    if (!selectedPrinter) return;
+    const btn = document.getElementById('btnSet');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span> Menerapkan...';
+    addLog('Mengatur printer aktif: ' + selectedPrinter, 'info');
+
+    try {
+      const r = await fetch(BASE + '/printer/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port: selectedPrinter })
+      });
+      const d = await r.json();
+      addLog(d.message, d.success ? 'ok' : 'err');
+      if (d.success) {
+        toast('Printer aktif: ' + selectedPrinter, 'success');
+        await refreshStatus();
+      } else {
+        toast('Gagal mengatur printer', 'error');
+      }
+    } catch (e) {
+      addLog('Error: ' + e.message, 'err');
+      toast('Koneksi gagal', 'error');
+    } finally {
+      btn.innerHTML = '✅ Terapkan Pilihan';
+      btn.disabled = false;
+    }
+  }
+
+  async function testPrint() {
+    addLog('Mengirim test print ke ' + (currentActivePrinter || '?'), 'info');
+    try {
+      const r = await fetch(BASE + '/print/test', { method: 'POST' });
+      const d = await r.json();
+      addLog(d.message, d.success ? 'ok' : 'err');
+      toast(d.success ? 'Test print berhasil!' : 'Test print gagal: ' + d.message, d.success ? 'success' : 'error');
+    } catch (e) {
+      addLog('Error: ' + e.message, 'err');
+      toast('Gagal terhubung ke server', 'error');
+    }
+  }
+
+  async function clearJobs() {
+    addLog('Membersihkan antrian print...', 'info');
+    try {
+      const r = await fetch(BASE + '/printer/clear-jobs', { method: 'POST' });
+      const d = await r.json();
+      addLog(d.message, d.success ? 'ok' : 'err');
+      toast(d.success ? 'Antrian dibersihkan' : 'Gagal: ' + d.message, d.success ? 'success' : 'error');
+      await refreshStatus();
+    } catch (e) {
+      addLog('Error: ' + e.message, 'err');
+    }
+  }
+
+  async function resetPrinter() {
+    addLog('Reset printer: ' + (currentActivePrinter || '?'), 'warn');
+    try {
+      const r = await fetch(BASE + '/printer/reset', { method: 'POST' });
+      const d = await r.json();
+      addLog(d.message, d.success ? 'ok' : 'err');
+      toast(d.success ? 'Printer berhasil di-reset' : 'Reset gagal', d.success ? 'success' : 'error');
+    } catch (e) {
+      addLog('Error: ' + e.message, 'err');
+    }
+  }
+
+  async function toggleMonitor() {
+    const newState = !monitorEnabled;
+    addLog((newState ? 'Mengaktifkan' : 'Menonaktifkan') + ' auto-monitor...', 'info');
+    try {
+      const r = await fetch(BASE + '/printer/auto-reconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: newState })
+      });
+      const d = await r.json();
+      addLog(d.message, d.success ? 'ok' : 'err');
+      toast(d.message, d.success ? 'success' : 'error');
+      await refreshStatus();
+    } catch (e) {
+      addLog('Error: ' + e.message, 'err');
+    }
+  }
+
+  // ── Init ──────────────────────────────────────────────
+  async function init() {
+    await refreshStatus();
+    // Also do a fresh scan to populate list
+    try {
+      const r = await fetch(BASE + '/printer/ports');
+      const d = await r.json();
+      if (d.ports && d.ports.length > 0) {
+        renderPrinterList(d.ports.map(p => ({ name: p.path, port: p.port, driver: p.manufacturer })), d.currentPrinter);
+      }
+    } catch (e) {
+      addLog('Gagal memuat daftar printer awal', 'err');
+    }
+  }
+
+  init();
+  // Auto-refresh status every 10s
+  setInterval(refreshStatus, 10000);
+</script>
+</body>
+</html>`);
+});
+
 // Get available printers (with rescan)
 app.get('/printer/ports', async (req, res) => {
   try {
@@ -688,6 +1391,7 @@ app.post('/printer/connect', (req, res) => {
 
   if (port) {
     currentPrinter = port;
+    saveConfig(); // Simpan pilihan printer ke file
   }
 
   res.json({
@@ -810,6 +1514,8 @@ app.post('/printer/auto-reconnect', (req, res) => {
     } else {
       stopReconnectMonitor();
     }
+
+    saveConfig(); // Simpan setting auto-reconnect ke file
 
     res.json({
       success: true,
@@ -1150,12 +1856,29 @@ app.listen(PORT, async () => {
 
   // Auto-connect on startup
   setTimeout(async () => {
-    const connected = await autoConnectPrinter();
+    if (currentPrinter !== DEFAULT_PRINTER) {
+      // Ada printer tersimpan di config, verifikasi dulu apakah masih tersedia
+      console.log(`\n🔗 Using saved printer: "${currentPrinter}"`);
+      const isWorking = await testPrinter(currentPrinter);
+      if (isWorking) {
+        console.log(`✅ Saved printer "${currentPrinter}" is available`);
+        // Tetap scan untuk update daftar availablePrinters
+        availablePrinters = await scanPrinters();
+      } else {
+        console.log(`⚠️  Saved printer "${currentPrinter}" not found, scanning for alternatives...`);
+        const connected = await autoConnectPrinter();
+        if (connected) saveConfig(); // Simpan printer baru yang berhasil connect
+      }
+    } else {
+      // Tidak ada config, lakukan auto-detect seperti biasa
+      const connected = await autoConnectPrinter();
+      if (connected) saveConfig();
+    }
 
-    if (connected && autoReconnectEnabled) {
+    if (autoReconnectEnabled) {
       console.log('\n🔄 Auto-reconnect monitoring enabled');
       startReconnectMonitor();
-    } else if (!connected) {
+    } else {
       console.log('\n⚠️  No printer connected. Use POST /printer/rescan to try again.');
     }
   }, 1000);

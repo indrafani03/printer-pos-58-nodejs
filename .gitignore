@@ -42,3 +42,5 @@ build/
 # Test coverage
 coverage/
 .nyc_output/
+
+printer_config.json
