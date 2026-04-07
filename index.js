@@ -34,6 +34,8 @@ let autoReconnectEnabled = false; // Default disabled untuk hemat kertas
 let reconnectInterval = null;
 let lastPrintTime = 0; // Track waktu print terakhir
 let isPrinting = false; // Lock untuk mencegah print bersamaan
+let currentLanguage = 'id';  // default Indonesian
+let currentCurrency = 'IDR'; // default Rupiah
 
 // Load config dari file (dipanggil saat startup)
 function loadConfig() {
@@ -43,13 +45,19 @@ function loadConfig() {
       const cfg = JSON.parse(raw);
       if (cfg.currentPrinter) {
         currentPrinter = cfg.currentPrinter;
-        console.log(`📂 Config loaded: printer = "${currentPrinter}"`);
       }
       if (typeof cfg.autoReconnectEnabled === 'boolean') {
         autoReconnectEnabled = cfg.autoReconnectEnabled;
       }
+      if (cfg.language) {
+        currentLanguage = cfg.language;
+      }
+      if (cfg.currency) {
+        currentCurrency = cfg.currency;
+      }
+      console.log(`📂 Config loaded: printer="${currentPrinter}", lang="${currentLanguage}", currency="${currentCurrency}"`);
     } else {
-      console.log(`📂 No config file found, using default printer: "${DEFAULT_PRINTER}"`);
+      console.log(`📂 No config file found, using defaults: printer="${DEFAULT_PRINTER}", lang="${currentLanguage}", currency="${currentCurrency}"`);
     }
   } catch (e) {
     console.error('⚠️  Failed to load config:', e.message);
@@ -62,10 +70,12 @@ function saveConfig() {
     const cfg = {
       currentPrinter,
       autoReconnectEnabled,
+      language: currentLanguage,
+      currency: currentCurrency,
       savedAt: new Date().toISOString()
     };
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8');
-    console.log(`💾 Config saved: printer = "${currentPrinter}"`);
+    console.log(`💾 Config saved: printer="${currentPrinter}", lang="${currentLanguage}", currency="${currentCurrency}"`);
   } catch (e) {
     console.error('⚠️  Failed to save config:', e.message);
   }
@@ -99,6 +109,252 @@ const commands = {
   FEED_LINE: ESC + 'd\x01',
   DOUBLE_HEIGHT: ESC + '!\x10',
   NORMAL_SIZE: ESC + '!\x00',
+};
+
+// Translation System
+const translations = {
+  id: {
+    receipt: {
+      date: "Tanggal",
+      receiptNo: "No. Struk",
+      orderNo: "No. Order",
+      cashier: "Kasir",
+      customer: "Customer",
+      item: "Item",
+      qty: "Qty",
+      price: "Harga",
+      subtotal: "Subtotal",
+      discount: "Diskon",
+      ppn: "PPN",
+      designCost: "Biaya Desain",
+      additionalCost: "Biaya Tambahan",
+      total: "TOTAL",
+      paymentMethod: "Metode",
+      paid: "Bayar",
+      change: "Kembali",
+      thankYou: "Terima Kasih!",
+      comeAgain: "Selamat Berbelanja Kembali",
+      totalItem: "Total item",
+      per: "per",
+      length: "Panjang",
+      size: "Ukuran",
+      note: "Note",
+      finishing: "Finishing"
+    },
+    qc: {
+      title: "LABEL QC",
+      orderNo: "No. Order",
+      date: "Tanggal",
+      customer: "Customer",
+      phone: "Telp",
+      items: "ITEMS",
+      qty: "Qty",
+      finishing: "Finishing",
+      status: "STATUS",
+      passed: "LULUS QC",
+      failed: "GAGAL QC",
+      notes: "Catatan QC",
+      qcBy: "QC By",
+      endLabel: "-- END OF LABEL --"
+    },
+    ui: {
+      title: "Printer Manager",
+      subtitle: "Kelola koneksi dan pengaturan printer thermal",
+      loading: "Memuat...",
+      fetchingStatus: "Mengambil status printer...",
+      noPrinter: "Tidak ada printer",
+      printerActive: "Printer aktif",
+      notConnected: "Tidak terhubung",
+      jobs: "jobs",
+      printing: "Mencetak...",
+      idle: "Idle",
+      monitorOn: "Monitor: on",
+      monitorOff: "Monitor: off",
+      selectPrinter: "Pilih Printer Aktif",
+      scanAgain: "Scan Ulang",
+      loadingPrinters: "Memuat daftar printer...",
+      noPrintersFound: "Tidak ada printer ditemukan",
+      ensurePrinterConnected: "Pastikan printer terhubung lalu klik",
+      applySelection: "Terapkan Pilihan",
+      quickActions: "Aksi Cepat",
+      testPrint: "Test Print",
+      testPrintDesc: "Cetak halaman uji",
+      clearJobs: "Clear Jobs",
+      clearJobsDesc: "Hapus antrian print",
+      reset: "Reset",
+      resetDesc: "Reset & init printer",
+      autoMonitor: "Auto Monitor",
+      enableMonitoring: "Aktifkan monitoring",
+      disableMonitoring: "Nonaktifkan",
+      activityLog: "Log Aktivitas",
+      clear: "Bersihkan",
+      ready: "Printer Manager siap",
+      active: "AKTIF",
+      available: "Tersedia",
+      settings: "Pengaturan",
+      language: "Bahasa",
+      currency: "Mata Uang",
+      saveSettings: "Simpan Pengaturan"
+    },
+    messages: {
+      printSuccess: "Print berhasil!",
+      printFailed: "Print gagal!",
+      closingIn: "Menutup dalam",
+      seconds: "detik",
+      retry: "Coba Lagi",
+      scanningPrinters: "Memulai scan printer...",
+      printersFound: "Printer ditemukan",
+      noPrintersDetected: "Tidak ada printer ditemukan",
+      settingPrinter: "Mengatur printer aktif",
+      printerSetSuccess: "Printer aktif",
+      printerSetFailed: "Gagal mengatur printer",
+      connectionFailed: "Koneksi gagal",
+      sendingTestPrint: "Mengirim test print ke",
+      testPrintSuccess: "Test print berhasil!",
+      clearingJobs: "Membersihkan antrian print...",
+      jobsCleared: "Antrian dibersihkan",
+      resettingPrinter: "Reset printer",
+      printerResetSuccess: "Printer berhasil di-reset",
+      resetFailed: "Reset gagal",
+      enablingMonitor: "Mengaktifkan",
+      disablingMonitor: "Menonaktifkan",
+      autoMonitorText: "auto-monitor...",
+      logCleared: "Log dibersihkan",
+      cannotConnectServer: "Tidak bisa terhubung ke server",
+      settingsSaved: "Pengaturan disimpan",
+      settingsSaveFailed: "Gagal menyimpan pengaturan"
+    }
+  },
+  en: {
+    receipt: {
+      date: "Date",
+      receiptNo: "Receipt No",
+      orderNo: "Order No",
+      cashier: "Cashier",
+      customer: "Customer",
+      item: "Item",
+      qty: "Qty",
+      price: "Price",
+      subtotal: "Subtotal",
+      discount: "Discount",
+      ppn: "Tax",
+      designCost: "Design Fee",
+      additionalCost: "Additional Fee",
+      total: "TOTAL",
+      paymentMethod: "Method",
+      paid: "Paid",
+      change: "Change",
+      thankYou: "Thank You!",
+      comeAgain: "Come Again Soon",
+      totalItem: "Item total",
+      per: "per",
+      length: "Length",
+      size: "Size",
+      note: "Note",
+      finishing: "Finishing"
+    },
+    qc: {
+      title: "QC LABEL",
+      orderNo: "Order No",
+      date: "Date",
+      customer: "Customer",
+      phone: "Phone",
+      items: "ITEMS",
+      qty: "Qty",
+      finishing: "Finishing",
+      status: "STATUS",
+      passed: "QC PASSED",
+      failed: "QC FAILED",
+      notes: "QC Notes",
+      qcBy: "QC By",
+      endLabel: "-- END OF LABEL --"
+    },
+    ui: {
+      title: "Printer Manager",
+      subtitle: "Manage thermal printer connection and settings",
+      loading: "Loading...",
+      fetchingStatus: "Fetching printer status...",
+      noPrinter: "No printer",
+      printerActive: "Printer active",
+      notConnected: "Not connected",
+      jobs: "jobs",
+      printing: "Printing...",
+      idle: "Idle",
+      monitorOn: "Monitor: on",
+      monitorOff: "Monitor: off",
+      selectPrinter: "Select Active Printer",
+      scanAgain: "Scan Again",
+      loadingPrinters: "Loading printer list...",
+      noPrintersFound: "No printers found",
+      ensurePrinterConnected: "Ensure printer is connected then click",
+      applySelection: "Apply Selection",
+      quickActions: "Quick Actions",
+      testPrint: "Test Print",
+      testPrintDesc: "Print test page",
+      clearJobs: "Clear Jobs",
+      clearJobsDesc: "Clear print queue",
+      reset: "Reset",
+      resetDesc: "Reset & init printer",
+      autoMonitor: "Auto Monitor",
+      enableMonitoring: "Enable monitoring",
+      disableMonitoring: "Disable",
+      activityLog: "Activity Log",
+      clear: "Clear",
+      ready: "Printer Manager ready",
+      active: "ACTIVE",
+      available: "Available",
+      settings: "Settings",
+      language: "Language",
+      currency: "Currency",
+      saveSettings: "Save Settings"
+    },
+    messages: {
+      printSuccess: "Print successful!",
+      printFailed: "Print failed!",
+      closingIn: "Closing in",
+      seconds: "seconds",
+      retry: "Retry",
+      scanningPrinters: "Scanning printers...",
+      printersFound: "Printers found",
+      noPrintersDetected: "No printers detected",
+      settingPrinter: "Setting active printer",
+      printerSetSuccess: "Active printer",
+      printerSetFailed: "Failed to set printer",
+      connectionFailed: "Connection failed",
+      sendingTestPrint: "Sending test print to",
+      testPrintSuccess: "Test print successful!",
+      clearingJobs: "Clearing print queue...",
+      jobsCleared: "Queue cleared",
+      resettingPrinter: "Resetting printer",
+      printerResetSuccess: "Printer successfully reset",
+      resetFailed: "Reset failed",
+      enablingMonitor: "Enabling",
+      disablingMonitor: "Disabling",
+      autoMonitorText: "auto-monitor...",
+      logCleared: "Log cleared",
+      cannotConnectServer: "Cannot connect to server",
+      settingsSaved: "Settings saved",
+      settingsSaveFailed: "Failed to save settings"
+    }
+  }
+};
+
+// Currency Configuration
+const currencyConfig = {
+  IDR: {
+    locale: 'id-ID',
+    currency: 'IDR',
+    symbol: 'Rp',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  },
+  USD: {
+    locale: 'en-US',
+    currency: 'USD',
+    symbol: '$',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }
 };
 
 // Function untuk scan printer yang tersedia
@@ -381,16 +637,56 @@ function cleanText(text) {
     .trim();
 }
 
-function formatRupiah(amount) {
-  const formatted = new Intl.NumberFormat('id-ID', {
+// Format currency based on current or specified currency
+function formatCurrency(amount, currency = currentCurrency) {
+  const config = currencyConfig[currency];
+  if (!config) {
+    // Fallback to IDR if currency not found
+    currency = 'IDR';
+    config = currencyConfig.IDR;
+  }
+
+  const formatted = new Intl.NumberFormat(config.locale, {
     style: 'currency',
-    currency: 'IDR',
-    minimumFractionDigits: 0
-  }).format(amount).replace('IDR', 'Rp');
-  return cleanText(formatted);
+    currency: config.currency,
+    minimumFractionDigits: config.minimumFractionDigits,
+    maximumFractionDigits: config.maximumFractionDigits
+  }).format(amount);
+
+  // For IDR, replace "IDR" with "Rp"
+  const cleaned = currency === 'IDR'
+    ? formatted.replace('IDR', config.symbol)
+    : formatted;
+
+  return cleanText(cleaned);
 }
 
-function createReceiptText(data) {
+// Format date/time based on language locale
+function formatDateTime(date = new Date(), lang = currentLanguage) {
+  const locale = lang === 'id' ? 'id-ID' : 'en-US';
+
+  return new Date(date).toLocaleString(locale, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+}
+
+function createReceiptText(data, lang = currentLanguage, currency = currentCurrency) {
+  // Translation helper
+  const t = (key) => {
+    const keys = key.split('.');
+    let value = translations[lang];
+    for (const k of keys) {
+      value = value?.[k];
+    }
+    return value || key;
+  };
+
   const receiptData = data.receiptData || data;
   const {
     store = {},
@@ -447,20 +743,16 @@ function createReceiptText(data) {
   receipt += commands.NEW_LINE;
 
   // Transaction info — selalu gunakan local datetime saat cetak
-  const printDate = new Date().toLocaleString('id-ID', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false
-  });
-  receipt += "Tanggal: " + cleanText(printDate) + commands.NEW_LINE;
-  if (receiptNumber) receipt += "No. Struk: " + cleanText(receiptNumber) + commands.NEW_LINE;
-  if (orderNumber) receipt += "No. Order: " + cleanText(orderNumber) + commands.NEW_LINE;
-  if (cashierName || cashier) receipt += "Kasir: " + cleanText(cashierName || cashier) + commands.NEW_LINE;
-  if (customerName) receipt += "Customer: " + cleanText(customerName) + commands.NEW_LINE;
+  const printDate = formatDateTime(new Date(), lang);
+  receipt += t('receipt.date') + ": " + cleanText(printDate) + commands.NEW_LINE;
+  if (receiptNumber) receipt += t('receipt.receiptNo') + ": " + cleanText(receiptNumber) + commands.NEW_LINE;
+  if (orderNumber) receipt += t('receipt.orderNo') + ": " + cleanText(orderNumber) + commands.NEW_LINE;
+  if (cashierName || cashier) receipt += t('receipt.cashier') + ": " + cleanText(cashierName || cashier) + commands.NEW_LINE;
+  if (customerName) receipt += t('receipt.customer') + ": " + cleanText(customerName) + commands.NEW_LINE;
   receipt += "--------------------------------" + commands.NEW_LINE;
 
   // Items header
-  receipt += formatLine("Item", "Qty  Harga") + commands.NEW_LINE;
+  receipt += formatLine(t('receipt.item'), t('receipt.qty') + "  " + t('receipt.price')) + commands.NEW_LINE;
   receipt += "--------------------------------" + commands.NEW_LINE;
 
   // Items
@@ -481,23 +773,23 @@ function createReceiptText(data) {
       const area = dimensions ? dimensions.area : null;
       if (area) {
         receipt += `  ${cleanText(ukuran)} (${area}m2)` + commands.NEW_LINE;
-        receipt += formatLine(`  ${formatRupiah(price)}/m2 x ${area}`, formatRupiah(itemTotal)) + commands.NEW_LINE;
+        receipt += formatLine(`  ${formatCurrency(price, currency)}/m2 x ${area}`, formatCurrency(itemTotal, currency)) + commands.NEW_LINE;
       } else {
-        receipt += `  Ukuran: ${cleanText(ukuran)}` + commands.NEW_LINE;
-        receipt += formatLine(`  ${qty} x ${formatRupiah(price)}`, formatRupiah(itemTotal)) + commands.NEW_LINE;
+        receipt += `  ${t('receipt.size')}: ${cleanText(ukuran)}` + commands.NEW_LINE;
+        receipt += formatLine(`  ${qty} x ${formatCurrency(price, currency)}`, formatCurrency(itemTotal, currency)) + commands.NEW_LINE;
       }
     } else if (stockType === "METERAN" && ukuran) {
       const length = item.meterLength || (dimensions ? dimensions.length : null);
       if (length) {
-        receipt += `  Panjang: ${length}m` + commands.NEW_LINE;
-        receipt += formatLine(`  ${formatRupiah(price)}/m x ${length}`, formatRupiah(itemTotal)) + commands.NEW_LINE;
+        receipt += `  ${t('receipt.length')}: ${length}m` + commands.NEW_LINE;
+        receipt += formatLine(`  ${formatCurrency(price, currency)}/m x ${length}`, formatCurrency(itemTotal, currency)) + commands.NEW_LINE;
       } else {
-        receipt += `  Ukuran: ${cleanText(ukuran)}` + commands.NEW_LINE;
-        receipt += formatLine(`  ${qty} x ${formatRupiah(price)}`, formatRupiah(itemTotal)) + commands.NEW_LINE;
+        receipt += `  ${t('receipt.size')}: ${cleanText(ukuran)}` + commands.NEW_LINE;
+        receipt += formatLine(`  ${qty} x ${formatCurrency(price, currency)}`, formatCurrency(itemTotal, currency)) + commands.NEW_LINE;
       }
     } else {
       // Untuk produk non-AREA/METERAN, gunakan qty x price
-      receipt += formatLine(`  ${qty} x ${formatRupiah(price)}`, formatRupiah(itemTotal)) + commands.NEW_LINE;
+      receipt += formatLine(`  ${qty} x ${formatCurrency(price, currency)}`, formatCurrency(itemTotal, currency)) + commands.NEW_LINE;
     }
 
     let finishingTotal = 0;
@@ -508,19 +800,19 @@ function createReceiptText(data) {
         const finishingPrice = finishing.price || 0;
         const finishingItemTotal = finishingPrice * (finishing.multiplyByQty ? qty : 1) * finishingQty;
         finishingTotal += finishingItemTotal;
-        receipt += formatLine(`    + ${finishingName}`, formatRupiah(finishingItemTotal)) + commands.NEW_LINE;
+        receipt += formatLine(`    + ${finishingName}`, formatCurrency(finishingItemTotal, currency)) + commands.NEW_LINE;
       });
     }
 
     if (item.notes) {
       const notes = cleanText(item.notes).substring(0, 28);
-      receipt += `    Note: ${notes}` + commands.NEW_LINE;
+      receipt += `    ${t('receipt.note')}: ${notes}` + commands.NEW_LINE;
     }
 
     // Tampilkan total item jika ada finishing
     if (finishingTotal > 0) {
       const finalItemTotal = itemTotal + finishingTotal;
-      receipt += formatLine("  Total item:", formatRupiah(finalItemTotal)) + commands.NEW_LINE;
+      receipt += formatLine("  " + t('receipt.totalItem') + ":", formatCurrency(finalItemTotal, currency)) + commands.NEW_LINE;
     }
   });
 
@@ -528,24 +820,24 @@ function createReceiptText(data) {
 
   // Totals
   if (subtotal > 0 && subtotal !== totalAmount) {
-    receipt += formatLine("Subtotal:", formatRupiah(subtotal)) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.subtotal') + ":", formatCurrency(subtotal, currency)) + commands.NEW_LINE;
   }
 
   if (ppnAmount > 0) {
-    receipt += formatLine("PPN:", formatRupiah(ppnAmount)) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.ppn') + ":", formatCurrency(ppnAmount, currency)) + commands.NEW_LINE;
   }
 
   if (discountAmount > 0) {
-    receipt += formatLine("Diskon:", "-" + formatRupiah(discountAmount)) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.discount') + ":", "-" + formatCurrency(discountAmount, currency)) + commands.NEW_LINE;
   }
 
   if (designCost > 0) {
-    receipt += formatLine("Biaya Desain:", formatRupiah(designCost)) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.designCost') + ":", formatCurrency(designCost, currency)) + commands.NEW_LINE;
     if (designerName) {
       receipt += `  (Designer: ${cleanText(designerName)})` + commands.NEW_LINE;
     }
   } else if (additionalServiceValue > 0) {
-    receipt += formatLine("Biaya Tambahan:", formatRupiah(additionalServiceValue)) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.additionalCost') + ":", formatCurrency(additionalServiceValue, currency)) + commands.NEW_LINE;
     if (additionalServiceNotes) {
       const notes = cleanText(additionalServiceNotes).substring(0, 28);
       receipt += `  (${notes})` + commands.NEW_LINE;
@@ -553,25 +845,25 @@ function createReceiptText(data) {
   }
 
   receipt += commands.BOLD_ON;
-  receipt += formatLine("TOTAL:", formatRupiah(totalAmount || total)) + commands.NEW_LINE;
+  receipt += formatLine(t('receipt.total') + ":", formatCurrency(totalAmount || total, currency)) + commands.NEW_LINE;
   receipt += commands.BOLD_OFF;
 
   if (paymentMethod) {
-    receipt += formatLine("Metode:", cleanText(paymentMethod)) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.paymentMethod') + ":", cleanText(paymentMethod)) + commands.NEW_LINE;
   }
 
   if ((cashReceived || payment) > 0) {
-    receipt += formatLine("Bayar:", formatRupiah(cashReceived || payment)) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.paid') + ":", formatCurrency(cashReceived || payment, currency)) + commands.NEW_LINE;
   }
 
   if ((cashChange || change) > 0) {
-    receipt += formatLine("Kembali:", formatRupiah(cashChange || change)) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.change') + ":", formatCurrency(cashChange || change, currency)) + commands.NEW_LINE;
   }
 
   receipt += commands.NEW_LINE;
   receipt += commands.ALIGN_CENTER;
-  receipt += "Terima Kasih!" + commands.NEW_LINE;
-  receipt += "Selamat Berbelanja Kembali" + commands.NEW_LINE;
+  receipt += t('receipt.thankYou') + commands.NEW_LINE;
+  receipt += t('receipt.comeAgain') + commands.NEW_LINE;
   receipt += commands.NEW_LINE;
   receipt += commands.FEED_LINE;
   receipt += commands.FEED_LINE;
@@ -580,7 +872,17 @@ function createReceiptText(data) {
   return receipt;
 }
 
-function createQCLabelText(data) {
+function createQCLabelText(data, lang = currentLanguage, currency = currentCurrency) {
+  // Translation helper
+  const t = (key) => {
+    const keys = key.split('.');
+    let value = translations[lang];
+    for (const k of keys) {
+      value = value?.[k];
+    }
+    return value || key;
+  };
+
   const {
     orderId = "",
     orderNumber = "",
@@ -600,7 +902,7 @@ function createQCLabelText(data) {
   label += commands.ALIGN_CENTER;
   label += commands.BOLD_ON;
   label += commands.DOUBLE_HEIGHT;
-  label += "LABEL QC" + commands.NEW_LINE;
+  label += t('qc.title') + commands.NEW_LINE;
   label += commands.NORMAL_SIZE;
   label += commands.BOLD_OFF;
   label += "================================" + commands.NEW_LINE;
@@ -608,23 +910,17 @@ function createQCLabelText(data) {
   label += commands.NEW_LINE;
 
   // Order Info
-  if (orderNumber) label += "No. Order: " + cleanText(orderNumber) + commands.NEW_LINE;
+  if (orderNumber) label += t('qc.orderNo') + ": " + cleanText(orderNumber) + commands.NEW_LINE;
 
   // Format date
-  const date = createdAt ? new Date(createdAt).toLocaleString('id-ID', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  }) : "";
-  if (date) label += "Tanggal: " + cleanText(date) + commands.NEW_LINE;
+  const date = createdAt ? formatDateTime(createdAt, lang) : "";
+  if (date) label += t('qc.date') + ": " + cleanText(date) + commands.NEW_LINE;
 
   label += "--------------------------------" + commands.NEW_LINE;
 
   // Customer Info
-  if (customerName) label += "Customer: " + cleanText(customerName) + commands.NEW_LINE;
-  if (customerPhone) label += "Telp: " + cleanText(customerPhone) + commands.NEW_LINE;
+  if (customerName) label += t('qc.customer') + ": " + cleanText(customerName) + commands.NEW_LINE;
+  if (customerPhone) label += t('qc.phone') + ": " + cleanText(customerPhone) + commands.NEW_LINE;
 
   if (customerName || customerPhone) {
     label += "--------------------------------" + commands.NEW_LINE;
@@ -632,7 +928,7 @@ function createQCLabelText(data) {
 
   // Items
   label += commands.BOLD_ON;
-  label += "ITEMS:" + commands.NEW_LINE;
+  label += t('qc.items') + ":" + commands.NEW_LINE;
   label += commands.BOLD_OFF;
 
   items.forEach((item, index) => {
@@ -640,11 +936,11 @@ function createQCLabelText(data) {
     const qty = parseInt(item.quantity || 0);
 
     label += `${index + 1}. ${productName}` + commands.NEW_LINE;
-    label += `   Qty: ${qty}` + commands.NEW_LINE;
+    label += `   ${t('qc.qty')}: ${qty}` + commands.NEW_LINE;
 
     // Finishings
     if (item.finishings && Array.isArray(item.finishings) && item.finishings.length > 0) {
-      label += "   Finishing:" + commands.NEW_LINE;
+      label += "   " + t('qc.finishing') + ":" + commands.NEW_LINE;
       item.finishings.forEach(finishing => {
         const finishingName = cleanText(finishing.name || "").substring(0, 26);
         label += `   - ${finishingName}` + commands.NEW_LINE;
@@ -661,11 +957,11 @@ function createQCLabelText(data) {
   label += commands.ALIGN_CENTER;
 
   if (qcStatus === "PASSED") {
-    label += "STATUS: LULUS QC" + commands.NEW_LINE;
+    label += t('qc.status') + ": " + t('qc.passed') + commands.NEW_LINE;
   } else if (qcStatus === "FAILED") {
-    label += "STATUS: GAGAL QC" + commands.NEW_LINE;
+    label += t('qc.status') + ": " + t('qc.failed') + commands.NEW_LINE;
   } else {
-    label += "STATUS: " + cleanText(qcStatus) + commands.NEW_LINE;
+    label += t('qc.status') + ": " + cleanText(qcStatus) + commands.NEW_LINE;
   }
 
   label += commands.BOLD_OFF;
@@ -674,7 +970,7 @@ function createQCLabelText(data) {
 
   // QC Notes
   if (qcNotes) {
-    label += "Catatan QC:" + commands.NEW_LINE;
+    label += t('qc.notes') + ":" + commands.NEW_LINE;
     const notes = cleanText(qcNotes);
     const noteLines = notes.match(/.{1,30}(\s|$)/g) || [notes];
     noteLines.forEach(line => {
@@ -685,12 +981,12 @@ function createQCLabelText(data) {
 
   // QC By
   if (qcBy) {
-    label += "QC By: " + cleanText(qcBy) + commands.NEW_LINE;
+    label += t('qc.qcBy') + ": " + cleanText(qcBy) + commands.NEW_LINE;
   }
 
   label += commands.NEW_LINE;
   label += commands.ALIGN_CENTER;
-  label += "-- END OF LABEL --" + commands.NEW_LINE;
+  label += t('qc.endLabel') + commands.NEW_LINE;
   label += commands.NEW_LINE;
   label += commands.FEED_LINE;
   label += commands.FEED_LINE;
@@ -926,6 +1222,28 @@ app.get('/printer/ui', (req, res) => {
       flex-wrap: wrap;
     }
 
+    /* Select/Dropdown */
+    .setting-select {
+      width: 100%;
+      padding: 10px 14px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+      transition: border-color .2s;
+    }
+    .setting-select:hover {
+      border-color: var(--accent);
+    }
+    .setting-select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(108,99,255,.15);
+    }
+
     /* Actions panel */
     .actions-grid {
       display: grid;
@@ -1092,11 +1410,43 @@ app.get('/printer/ui', (req, res) => {
     </div>
   </div>
 
+  <!-- Settings -->
+  <div class="section">
+    <div class="section-header">
+      <h2 id="settingsTitle">⚙️ Pengaturan</h2>
+    </div>
+    <div class="section-body">
+      <div style="display: grid; gap: 16px;">
+        <!-- Language -->
+        <div>
+          <label style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 8px;" id="labelLanguage">Bahasa:</label>
+          <select id="selectLanguage" class="setting-select" onchange="onLanguageChange()">
+            <option value="id">Bahasa Indonesia</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+
+        <!-- Currency -->
+        <div>
+          <label style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 8px;" id="labelCurrency">Mata Uang:</label>
+          <select id="selectCurrency" class="setting-select" onchange="onCurrencyChange()">
+            <option value="IDR">IDR (Rupiah)</option>
+            <option value="USD">USD (US Dollar)</option>
+          </select>
+        </div>
+
+        <button class="btn btn-primary" onclick="saveSettings()" id="btnSaveSettings">
+          💾 Simpan Pengaturan
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Log -->
   <div class="section">
     <div class="section-header">
-      <h2>📋 Log Aktivitas</h2>
-      <button class="btn btn-ghost btn-sm" onclick="clearLog()">Bersihkan</button>
+      <h2 id="logTitle">📋 Log Aktivitas</h2>
+      <button class="btn btn-ghost btn-sm" onclick="clearLog()" id="btnClearLog">Bersihkan</button>
     </div>
     <div class="section-body" style="padding-top:0">
       <div class="log-box" id="logBox">
@@ -1114,6 +1464,83 @@ app.get('/printer/ui', (req, res) => {
   let selectedPrinter = null;
   let currentActivePrinter = null;
   let monitorEnabled = false;
+  let currentLanguage = 'id';
+  let currentCurrency = 'IDR';
+
+  // Client-side translations (UI only)
+  const translations = {
+    id: {
+      settings: "Pengaturan",
+      language: "Bahasa",
+      currency: "Mata Uang",
+      saveSettings: "Simpan Pengaturan",
+      logTitle: "Log Aktivitas",
+      clear: "Bersihkan",
+      quickActions: "Aksi Cepat",
+      testPrint: "Test Print",
+      testPrintDesc: "Cetak halaman uji",
+      clearJobs: "Clear Jobs",
+      clearJobsDesc: "Hapus antrian print",
+      reset: "Reset",
+      resetDesc: "Reset & init printer",
+      autoMonitor: "Auto Monitor",
+      enableMonitoring: "Aktifkan monitoring",
+      disableMonitoring: "Nonaktifkan",
+      selectPrinter: "Pilih Printer Aktif",
+      scanAgain: "Scan Ulang",
+      applySelection: "Terapkan Pilihan",
+      noPrinter: "Tidak ada printer",
+      printerActive: "Printer aktif",
+      notConnected: "Tidak terhubung",
+      jobs: "jobs",
+      printing: "Mencetak...",
+      idle: "Idle",
+      monitorOn: "Monitor: on",
+      monitorOff: "Monitor: off",
+      settingsSaved: "Pengaturan disimpan",
+      settingsSaveFailed: "Gagal menyimpan pengaturan",
+      loading: "Memuat...",
+      ready: "Printer Manager siap"
+    },
+    en: {
+      settings: "Settings",
+      language: "Language",
+      currency: "Currency",
+      saveSettings: "Save Settings",
+      logTitle: "Activity Log",
+      clear: "Clear",
+      quickActions: "Quick Actions",
+      testPrint: "Test Print",
+      testPrintDesc: "Print test page",
+      clearJobs: "Clear Jobs",
+      clearJobsDesc: "Clear print queue",
+      reset: "Reset",
+      resetDesc: "Reset & init printer",
+      autoMonitor: "Auto Monitor",
+      enableMonitoring: "Enable monitoring",
+      disableMonitoring: "Disable",
+      selectPrinter: "Select Active Printer",
+      scanAgain: "Scan Again",
+      applySelection: "Apply Selection",
+      noPrinter: "No printer",
+      printerActive: "Printer active",
+      notConnected: "Not connected",
+      jobs: "jobs",
+      printing: "Printing...",
+      idle: "Idle",
+      monitorOn: "Monitor: on",
+      monitorOff: "Monitor: off",
+      settingsSaved: "Settings saved",
+      settingsSaveFailed: "Failed to save settings",
+      loading: "Loading...",
+      ready: "Printer Manager ready"
+    }
+  };
+
+  // Translation helper
+  function t(key) {
+    return translations[currentLanguage][key] || key;
+  }
 
   // ── Logging ──────────────────────────────────────────
   function addLog(msg, type = 'info') {
@@ -1343,8 +1770,117 @@ app.get('/printer/ui', (req, res) => {
     }
   }
 
+  // ── Settings ──────────────────────────────────────────
+  function updateUILanguage() {
+    document.getElementById('settingsTitle').innerHTML = '⚙️ ' + t('settings');
+    document.getElementById('labelLanguage').textContent = t('language') + ':';
+    document.getElementById('labelCurrency').textContent = t('currency') + ':';
+    document.getElementById('btnSaveSettings').innerHTML = '💾 ' + t('saveSettings');
+    document.getElementById('logTitle').innerHTML = '📋 ' + t('logTitle');
+    document.getElementById('btnClearLog').textContent = t('clear');
+
+    // Quick Actions
+    const actionsHeader = document.querySelector('.section:nth-child(3) .section-header h2');
+    if (actionsHeader) actionsHeader.innerHTML = '⚡ ' + t('quickActions');
+
+    // Update action button texts
+    const actionLabels = document.querySelectorAll('.action-label');
+    const actionDescs = document.querySelectorAll('.action-desc');
+    if (actionLabels[0]) actionLabels[0].textContent = t('testPrint');
+    if (actionDescs[0]) actionDescs[0].textContent = t('testPrintDesc');
+    if (actionLabels[1]) actionLabels[1].textContent = t('clearJobs');
+    if (actionDescs[1]) actionDescs[1].textContent = t('clearJobsDesc');
+    if (actionLabels[2]) actionLabels[2].textContent = t('reset');
+    if (actionDescs[2]) actionDescs[2].textContent = t('resetDesc');
+    if (actionLabels[3]) actionLabels[3].textContent = t('autoMonitor');
+
+    // Update select printer section
+    const selectHeader = document.querySelector('.section:nth-child(2) .section-header h2');
+    if (selectHeader) selectHeader.innerHTML = '🖨️ ' + t('selectPrinter');
+
+    // Update buttons
+    const btnRescan = document.getElementById('btnRescan');
+    const btnSet = document.getElementById('btnSet');
+    if (btnRescan) btnRescan.innerHTML = '🔍 ' + t('scanAgain');
+    if (btnSet) btnSet.innerHTML = '✅ ' + t('applySelection');
+
+    // Update status text
+    if (document.getElementById('statusPrinter').textContent === 'Tidak ada printer' ||
+        document.getElementById('statusPrinter').textContent === 'No printer') {
+      document.getElementById('statusPrinter').textContent = t('noPrinter');
+    }
+
+    // Update log initial message
+    const initialLog = document.querySelector('.log-line.info');
+    if (initialLog && (initialLog.textContent.includes('siap') || initialLog.textContent.includes('ready'))) {
+      initialLog.textContent = '🚀 ' + t('ready');
+    }
+  }
+
+  function onLanguageChange() {
+    currentLanguage = document.getElementById('selectLanguage').value;
+    updateUILanguage();
+  }
+
+  function onCurrencyChange() {
+    currentCurrency = document.getElementById('selectCurrency').value;
+  }
+
+  async function saveSettings() {
+    const btn = document.getElementById('btnSaveSettings');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span> ' + t('loading');
+
+    try {
+      const r = await fetch(BASE + '/settings/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          language: currentLanguage,
+          currency: currentCurrency
+        })
+      });
+      const d = await r.json();
+
+      if (d.success) {
+        toast(t('settingsSaved'), 'success');
+        addLog(t('settingsSaved'), 'ok');
+      } else {
+        toast(t('settingsSaveFailed'), 'error');
+        addLog(t('settingsSaveFailed'), 'err');
+      }
+    } catch (e) {
+      toast(t('settingsSaveFailed'), 'error');
+      addLog('Error: ' + e.message, 'err');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '💾 ' + t('saveSettings');
+    }
+  }
+
+  async function loadSettings() {
+    try {
+      const r = await fetch(BASE + '/settings/get');
+      const d = await r.json();
+      if (d.success) {
+        if (d.language) {
+          currentLanguage = d.language;
+          document.getElementById('selectLanguage').value = currentLanguage;
+        }
+        if (d.currency) {
+          currentCurrency = d.currency;
+          document.getElementById('selectCurrency').value = currentCurrency;
+        }
+        updateUILanguage();
+      }
+    } catch (e) {
+      console.error('Failed to load settings:', e);
+    }
+  }
+
   // ── Init ──────────────────────────────────────────────
   async function init() {
+    await loadSettings();
     await refreshStatus();
     // Also do a fresh scan to populate list
     try {
@@ -1531,6 +2067,45 @@ app.post('/printer/auto-reconnect', (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to change auto-reconnect setting',
+      error: error.message
+    });
+  }
+});
+
+// Get current settings (language and currency)
+app.get('/settings/get', (req, res) => {
+  res.json({
+    success: true,
+    language: currentLanguage,
+    currency: currentCurrency
+  });
+});
+
+// Update settings (language and currency)
+app.post('/settings/update', (req, res) => {
+  try {
+    const { language, currency } = req.body;
+
+    if (language && ['id', 'en'].includes(language)) {
+      currentLanguage = language;
+    }
+
+    if (currency && ['IDR', 'USD'].includes(currency)) {
+      currentCurrency = currency;
+    }
+
+    saveConfig(); // Save to file
+
+    res.json({
+      success: true,
+      message: translations[currentLanguage].messages.settingsSaved,
+      language: currentLanguage,
+      currency: currentCurrency
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update settings',
       error: error.message
     });
   }
