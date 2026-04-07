@@ -757,7 +757,14 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
 
   // Items
   items.forEach(item => {
-    const name = cleanText(item.name || "").substring(0, 28);
+    // Decode URL-encoded name and replace + with spaces for variants
+    let decodedName = item.name || "";
+    try {
+      decodedName = decodeURIComponent(decodedName.replace(/\+/g, ' '));
+    } catch (e) {
+      decodedName = decodedName.replace(/\+/g, ' ');
+    }
+    const name = cleanText(decodedName); // No length limit for full variant display
     const qty = parseInt(item.quantity || item.qty || 0);
     const price = item.price || 0;
     const stockType = (item.stockType || "").toUpperCase();
@@ -795,12 +802,12 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
     let finishingTotal = 0;
     if (item.finishings && Array.isArray(item.finishings) && item.finishings.length > 0) {
       item.finishings.forEach(finishing => {
-        const finishingName = cleanText(finishing.name || "").substring(0, 24);
-        const finishingQty = finishing.quantity || 1;
+        const finishingName = cleanText(finishing.name || "").substring(0, 20);
+        const finishingQty = finishing.finishingQty || finishing.quantity || 1;
         const finishingPrice = finishing.price || 0;
         const finishingItemTotal = finishingPrice * (finishing.multiplyByQty ? qty : 1) * finishingQty;
         finishingTotal += finishingItemTotal;
-        receipt += formatLine(`    + ${finishingName}`, formatCurrency(finishingItemTotal, currency)) + commands.NEW_LINE;
+        receipt += formatLine(`    + ${finishingName} (${finishingQty}x)`, formatCurrency(finishingItemTotal, currency)) + commands.NEW_LINE;
       });
     }
 
