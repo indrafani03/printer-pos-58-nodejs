@@ -7,6 +7,8 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const axios = require('axios');
+const sharp = require('sharp');
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -93,6 +95,119 @@ function debugLog(...args) {
 function escapeHtml(text) {
   const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
   return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+// Download dan konversi logo ke ESC/POS raster image bytes
+// paperWidthPx: 384 untuk 58mm paper (POS58 @203dpi)
+async function getLogoEscPos(logoUrl, paperWidthPx = 384) {
+  try {
+    console.log('🖼️ Downloading logo:', logoUrl);
+
+    const response = await axios.get(logoUrl, {
+      responseType: 'arraybuffer',
+      timeout: 8000
+    });
+    const imageBuffer = Buffer.from(response.data);
+
+    // Ukuran logo: 200px lebar (~52% lebar kertas 58mm)
+    const targetWidth = 200;
+
+    // Proses dengan sharp
+    const { data: pixels, info } = await sharp(imageBuffer)
+      .resize(targetWidth, null, {
+        fit: 'contain',
+        background: { r: 255, g: 255, b: 255, alpha: 1 }
+      })
+      .flatten({ background: { r: 255, g: 255, b: 255 } })
+      .normalise()
+      .sharpen({ sigma: 1.5, m1: 1.5, m2: 2 })
+      .grayscale()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    const { width, height } = info;
+    console.log(`🖼️ Logo processed: ${width}x${height}px`);
+
+    // Total bytes per row berdasarkan lebar kertas (384px / 8 = 48 bytes)
+    const totalBytesPerRow = Math.ceil(paperWidthPx / 8);
+
+    // Offset kiri untuk centering logo
+    const leftPaddingPx = Math.floor((paperWidthPx - width) / 2);
+
+    // --- Floyd-Steinberg Dithering ---
+    // Menghasilkan gradasi yang lebih smooth di printer thermal 1-bit
+    // Salin pixels ke Float32Array agar bisa menyimpan error diffusion
+    const gray = new Float32Array(width * height);
+    for (let i = 0; i < pixels.length; i++) gray[i] = pixels[i];
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = y * width + x;
+        const oldVal = Math.max(0, Math.min(255, gray[idx]));
+        const newVal = oldVal < 128 ? 0 : 255; // threshold
+        gray[idx] = newVal;
+        const err = oldVal - newVal;
+
+        // Sebarkan error ke tetangga (Floyd-Steinberg weights)
+        if (x + 1 < width) gray[idx + 1] += err * 7 / 16;
+        if (y + 1 < height && x > 0) gray[idx + width - 1] += err * 3 / 16;
+        if (y + 1 < height) gray[idx + width] += err * 5 / 16;
+        if (y + 1 < height && x + 1 < width) gray[idx + width + 1] += err * 1 / 16;
+      }
+    }
+
+    // Konversi hasil dithering ke 1-bit monochrome (format ESC/POS: MSB first)
+    const bitmapRows = [];
+    for (let y = 0; y < height; y++) {
+      const row = new Uint8Array(totalBytesPerRow);
+      for (let x = 0; x < width; x++) {
+        const bitX = x + leftPaddingPx;
+        if (bitX < paperWidthPx && gray[y * width + x] === 0) { // pixel hitam = cetak
+          row[Math.floor(bitX / 8)] |= (0x80 >> (bitX % 8));
+        }
+      }
+      bitmapRows.push(...row);
+    }
+
+    // ESC/POS: GS v 0 (raster bit image)
+    // \x1d\x76\x30 mode xL xH yL yH [data...]
+    const xL = totalBytesPerRow & 0xFF;
+    const xH = (totalBytesPerRow >> 8) & 0xFF;
+    const yL = height & 0xFF;
+    const yH = (height >> 8) & 0xFF;
+
+    const header = Buffer.from([0x1d, 0x76, 0x30, 0x00, xL, xH, yL, yH]);
+    const bitmapBuffer = Buffer.from(new Uint8Array(bitmapRows));
+
+    console.log(`✅ Logo ESC/POS ready: ${header.length + bitmapBuffer.length} bytes`);
+    return Buffer.concat([header, bitmapBuffer]);
+
+  } catch (err) {
+    console.error('❌ Logo failed (lanjut tanpa logo):', err.message);
+    return null;
+  }
+}
+
+// Gabungkan logo bytes + receipt text menjadi satu Buffer untuk dikirim ke printer
+// Logo disisipkan setelah INIT + ALIGN_CENTER (5 bytes pertama receipt)
+async function buildReceiptBuffer(receiptText, store) {
+  const receiptBuffer = Buffer.from(receiptText, 'binary');
+
+  if (store?.hasLogo && store?.logoUrl) {
+    const logoBytes = await getLogoEscPos(store.logoUrl);
+    if (logoBytes) {
+      // INIT = \x1B\x40 (2 bytes), ALIGN_CENTER = \x1B\x61\x01 (3 bytes)
+      const insertPos = 5;
+      return Buffer.concat([
+        receiptBuffer.slice(0, insertPos),  // INIT + ALIGN_CENTER
+        logoBytes,                           // gambar logo
+        Buffer.from('\n', 'binary'),         // spasi setelah logo
+        receiptBuffer.slice(insertPos)       // sisa struk
+      ]);
+    }
+  }
+
+  return receiptBuffer;
 }
 
 // ESC/POS Commands (will be converted to text formatting)
@@ -1029,6 +1144,8 @@ function createQCLabelText(data, lang = currentLanguage, currency = currentCurre
   label += commands.ALIGN_CENTER;
   label += t('qc.endLabel') + commands.NEW_LINE;
   label += commands.NEW_LINE;
+  label += commands.FEED_LINE;
+  label += commands.FEED_LINE;
   label += commands.FEED_LINE;
   label += commands.FEED_LINE;
   label += commands.CUT;
@@ -2225,9 +2342,11 @@ app.get('/print/receipt', async (req, res) => {
       throw new Error("Data receipt kosong. Pastikan items dan total terisi.");
     }
 
-    // Print
+    // Print (dengan logo jika tersedia)
     const receiptText = createReceiptText(receiptData);
-    await printToWindowsPrinter(currentPrinter, receiptText);
+    const storeData = (receiptData.receiptData || receiptData).store;
+    const finalBuffer = await buildReceiptBuffer(receiptText, storeData);
+    await printToWindowsPrinter(currentPrinter, finalBuffer);
 
     debugLog(`[${requestId}] ✅ Print success`);
 
@@ -2403,7 +2522,9 @@ app.post('/print/receipt', async (req, res) => {
     }
 
     const receiptText = createReceiptText(receiptData);
-    await printToWindowsPrinter(currentPrinter, receiptText);
+    const storeData = (receiptData.receiptData || receiptData).store;
+    const finalBuffer = await buildReceiptBuffer(receiptText, storeData);
+    await printToWindowsPrinter(currentPrinter, finalBuffer);
 
     res.json({
       success: true,
