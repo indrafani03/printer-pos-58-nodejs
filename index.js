@@ -178,9 +178,10 @@ async function getLogoEscPos(logoUrl, paperWidthPx = 384) {
 
     const header = Buffer.from([0x1d, 0x76, 0x30, 0x00, xL, xH, yL, yH]);
     const bitmapBuffer = Buffer.from(new Uint8Array(bitmapRows));
+    const marginBottom = Buffer.from('\n\n', 'binary'); // 2 baris margin bawah logo
 
     console.log(`✅ Logo ESC/POS ready: ${header.length + bitmapBuffer.length} bytes`);
-    return Buffer.concat([header, bitmapBuffer]);
+    return Buffer.concat([header, bitmapBuffer, marginBottom]);
 
   } catch (err) {
     console.error('❌ Logo failed (lanjut tanpa logo):', err.message);
@@ -200,8 +201,7 @@ async function buildReceiptBuffer(receiptText, store) {
       const insertPos = 5;
       return Buffer.concat([
         receiptBuffer.slice(0, insertPos),  // INIT + ALIGN_CENTER
-        logoBytes,                           // gambar logo
-        Buffer.from('\n', 'binary'),         // spasi setelah logo
+        logoBytes,                           // gambar logo + margin sudah ada di dalamnya
         receiptBuffer.slice(insertPos)       // sisa struk
       ]);
     }
@@ -1021,6 +1021,8 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
   receipt += t('receipt.thankYou') + commands.NEW_LINE;
   receipt += t('receipt.comeAgain') + commands.NEW_LINE;
   receipt += commands.NEW_LINE;
+  receipt += commands.FEED_LINE;
+  receipt += commands.FEED_LINE;
   receipt += commands.FEED_LINE;
   receipt += commands.FEED_LINE;
   receipt += commands.CUT;
