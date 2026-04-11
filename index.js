@@ -139,7 +139,12 @@ const translations = {
       length: "Panjang",
       size: "Ukuran",
       note: "Note",
-      finishing: "Finishing"
+      finishing: "Finishing",
+      paymentType: "Jenis Bayar",
+      downpayment: "DP",
+      hutang: "Hutang",
+      lunas: "Lunas",
+      remaining: "Sisa Bayar"
     },
     qc: {
       title: "LABEL QC",
@@ -251,7 +256,12 @@ const translations = {
       length: "Length",
       size: "Size",
       note: "Note",
-      finishing: "Finishing"
+      finishing: "Finishing",
+      paymentType: "Payment Type",
+      downpayment: "Down Payment",
+      hutang: "Credit",
+      lunas: "Paid Off",
+      remaining: "Remaining"
     },
     qc: {
       title: "QC LABEL",
@@ -703,7 +713,9 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
     designCost = 0,
     designerName = "",
     totalAmount = 0,
+    orderTotalAmount = 0,
     paymentMethod = "",
+    paymentType = "",
     cashReceived = 0,
     cashChange = 0,
     paymentDate = "",
@@ -859,8 +871,30 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
     receipt += formatLine(t('receipt.paymentMethod') + ":", cleanText(paymentMethod)) + commands.NEW_LINE;
   }
 
+  // Tampilkan jenis pembayaran
+  if (paymentType) {
+    const typeUpper = paymentType.toUpperCase();
+    let typeLabel = cleanText(paymentType);
+    if (typeUpper === 'DOWNPAYMENT') typeLabel = t('receipt.downpayment');
+    else if (typeUpper === 'HUTANG') typeLabel = t('receipt.hutang');
+    else if (typeUpper === 'LUNAS') typeLabel = t('receipt.lunas');
+    receipt += formatLine(t('receipt.paymentType') + ":", typeLabel) + commands.NEW_LINE;
+  }
+
   if ((cashReceived || payment) > 0) {
     receipt += formatLine(t('receipt.paid') + ":", formatCurrency(cashReceived || payment, currency)) + commands.NEW_LINE;
+  }
+
+  // Tampilkan sisa bayar untuk DOWNPAYMENT atau HUTANG
+  if (paymentType && (paymentType.toUpperCase() === 'DOWNPAYMENT' || paymentType.toUpperCase() === 'HUTANG')) {
+    const orderTotal = orderTotalAmount || totalAmount || total;
+    const paid = cashReceived || payment || 0;
+    const remaining = orderTotal - paid;
+    if (remaining > 0) {
+      receipt += commands.BOLD_ON;
+      receipt += formatLine(t('receipt.remaining') + ":", formatCurrency(remaining, currency)) + commands.NEW_LINE;
+      receipt += commands.BOLD_OFF;
+    }
   }
 
   if ((cashChange || change) > 0) {

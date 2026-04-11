@@ -3,11 +3,25 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "start": "node index.js",
+    "build": "npx @yao-pkg/pkg index.js --target node18-win-x64 --output dist/printer-service.exe",
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "pkg": {
+    "targets": [
+      "node18-win-x64"
+    ],
+    "outputPath": "dist",
+    "assets": [
+      "printer_config.json"
+    ]
   },
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Thermal Printer API Service",
+  "devDependencies": {
+    "@yao-pkg/pkg": "^5.16.1"
+  },
   "dependencies": {
     "axios": "^1.12.2",
     "cors": "^2.8.5",
