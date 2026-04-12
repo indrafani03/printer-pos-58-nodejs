@@ -1,98 +1,185 @@
-const Service = require('node-windows').Service;
+/**
+ * install-service.js
+ * Mendaftarkan Thermal Printer Service menggunakan Windows Task Scheduler.
+ * Lebih reliable daripada node-windows karena tidak bergantung pada WinSW wrapper.
+ *
+ * Jalankan sebagai Administrator:
+ *   node install-service.js
+ */
+
+const { execSync, spawnSync } = require('child_process');
 const path = require('path');
-const { execSync } = require('child_process');
+const fs   = require('fs');
 
-const SERVICE_NAME = 'ThermalPrinterService';
-const SERVICE_DISPLAY = 'Thermal Printer Service';
+const TASK_NAME   = 'ThermalPrinterService';
+const NODE_EXE    = process.execPath;                      // full path node.exe
+const SCRIPT_PATH = path.join(__dirname, 'index.js');
+const WORK_DIR    = __dirname;
+const PORT        = '5000';
 
-// Create a new service object
-const svc = new Service({
-  name: SERVICE_NAME,
-  description: 'API service for thermal printer operations (RPP02N)',
-  script: path.join(__dirname, 'index.js'),
+// ── Helpers ────────────────────────────────────────────────────────────────
 
-  // Full path to node.exe agar tidak bergantung pada PATH system
-  execPath: process.execPath,
+function ps(command) {
+  const result = spawnSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command],
+    { encoding: 'utf8' }
+  );
+  if (result.error) throw result.error;
+  return { stdout: (result.stdout || '').trim(), stderr: (result.stderr || '').trim(), status: result.status };
+}
 
-  // Working directory eksplisit
-  workingDirectory: __dirname,
+function abort(msg) {
+  console.error('\n✗ ' + msg);
+  process.exit(1);
+}
 
-  // Restart otomatis jika crash: tunggu 3 detik, max 10x retry
-  wait: 3,
-  grow: 0.5,
-  maxRetries: 10,
+// ── Cek Administrator ──────────────────────────────────────────────────────
 
-  nodeOptions: [
-    '--max_old_space_size=512'
-  ],
+const adminCheck = ps('[bool](([System.Security.Principal.WindowsIdentity]::GetCurrent()).groups -match "S-1-5-32-544")');
+if (adminCheck.stdout !== 'True') {
+  abort('Script harus dijalankan sebagai Administrator!\n  Klik kanan PowerShell → "Run as administrator", lalu jalankan:\n  node install-service.js');
+}
 
-  env: [
-    { name: 'PORT',     value: '5000' },
-    { name: 'NODE_ENV', value: 'production' }
-  ]
-});
+console.log('==============================================');
+console.log(' Thermal Printer Service — Task Scheduler');
+console.log('==============================================');
+console.log('Node.js  : ' + NODE_EXE);
+console.log('Script   : ' + SCRIPT_PATH);
+console.log('Work dir : ' + WORK_DIR);
+console.log('Port     : ' + PORT);
+console.log('');
 
-svc.on('install', function () {
-  console.log('✓ Service installed successfully!');
+// ── Validasi file ──────────────────────────────────────────────────────────
 
-  // Set startup type ke Automatic dan konfigurasi recovery via sc.exe
-  try {
-    // Startup Automatic (delayed) agar sistem sudah siap
-    execSync(`sc config "${SERVICE_NAME}" start= delayed-auto`, { stdio: 'pipe' });
-    console.log('✓ Startup type set to: Automatic (Delayed)');
-  } catch (e) {
-    console.warn('⚠ Could not set startup type (try running as Administrator):', e.message);
-  }
+if (!fs.existsSync(SCRIPT_PATH)) abort('index.js tidak ditemukan di: ' + SCRIPT_PATH);
+if (!fs.existsSync(NODE_EXE))    abort('node.exe tidak ditemukan di: ' + NODE_EXE);
 
-  try {
-    // Recovery: restart service setelah 5 detik jika gagal (3 kali)
-    execSync(
-      `sc failure "${SERVICE_NAME}" reset= 86400 actions= restart/5000/restart/5000/restart/5000`,
-      { stdio: 'pipe' }
-    );
-    console.log('✓ Failure recovery configured (auto-restart on crash)');
-  } catch (e) {
-    console.warn('⚠ Could not set failure recovery:', e.message);
-  }
+// ── Hapus task lama jika ada ───────────────────────────────────────────────
 
-  console.log('\n✓ Starting service...');
-  svc.start();
-});
+const existing = ps(`(Get-ScheduledTask -TaskName '${TASK_NAME}' -ErrorAction SilentlyContinue) -ne $null`);
+if (existing.stdout === 'True') {
+  console.log('⚠ Task "' + TASK_NAME + '" sudah ada. Menghapus dulu...');
+  const del = ps(`Unregister-ScheduledTask -TaskName '${TASK_NAME}' -Confirm:$false`);
+  if (del.status !== 0) abort('Gagal menghapus task lama:\n' + del.stderr);
+  console.log('✓ Task lama dihapus.\n');
+}
 
-svc.on('start', function () {
-  console.log('✓ Service started successfully!');
-  console.log('');
-  console.log('  Service Name : ' + SERVICE_NAME);
-  console.log('  Display Name : ' + SERVICE_DISPLAY);
-  console.log('  Node Path    : ' + process.execPath);
-  console.log('  Script       : ' + path.join(__dirname, 'index.js'));
-  console.log('  URL          : http://localhost:5000');
-  console.log('');
-  console.log('  Manage via:');
-  console.log('    services.msc  → "' + SERVICE_DISPLAY + '"');
-  console.log('    Task Manager  → Services tab');
-  console.log('');
+// Hapus juga Windows Service lama jika masih ada
+const oldSvc = ps(`(Get-Service -Name '${TASK_NAME}' -ErrorAction SilentlyContinue) -ne $null`);
+if (oldSvc.stdout === 'True') {
+  console.log('⚠ Windows Service "' + TASK_NAME + '" ditemukan. Menghapus...');
+  ps(`Stop-Service -Name '${TASK_NAME}' -Force -ErrorAction SilentlyContinue`);
+  ps(`sc.exe delete '${TASK_NAME}'`);
+  console.log('✓ Windows Service lama dihapus.\n');
+}
 
-  // Verifikasi status lewat sc.exe
-  try {
-    const status = execSync(`sc query "${SERVICE_NAME}"`, { encoding: 'utf8' });
-    const match = status.match(/STATE\s+:\s+\d+\s+(\w+)/);
-    if (match) console.log('  Current State: ' + match[1]);
-  } catch (e) { /* ignore */ }
-});
+// ── Buat wrapper .bat ──────────────────────────────────────────────────────
+// Task Scheduler butuh executable — kita buat .bat yang launch node
 
-svc.on('alreadyinstalled', function () {
-  console.log('⚠ Service is already installed.');
-  console.log('  Run: node uninstall-service.js   to remove it first.');
-});
+const batPath = path.join(WORK_DIR, 'start-service.bat');
+const batContent = [
+  '@echo off',
+  'set PORT=' + PORT,
+  'set NODE_ENV=production',
+  'cd /d "' + WORK_DIR + '"',
+  '"' + NODE_EXE + '" "' + SCRIPT_PATH + '"',
+].join('\r\n');
 
-svc.on('error', function (err) {
-  console.error('✗ Error:', err);
-});
+fs.writeFileSync(batPath, batContent, 'utf8');
+console.log('✓ Wrapper dibuat: ' + batPath);
 
-// Install
-console.log('Installing ' + SERVICE_DISPLAY + '...');
-console.log('Node.js path: ' + process.execPath);
-console.log('Script path : ' + path.join(__dirname, 'index.js'));
-console.log('Please wait...\n');
-svc.install();
+// ── Daftarkan Task Scheduler ────────────────────────────────────────────────
+
+const psCmd = `
+$action   = New-ScheduledTaskAction \`
+              -Execute 'cmd.exe' \`
+              -Argument '/c "${batPath.replace(/\\/g, '\\\\')}"' \`
+              -WorkingDirectory '${WORK_DIR.replace(/\\/g, '\\\\')}';
+
+$trigger  = New-ScheduledTaskTrigger -AtStartup;
+
+$settings = New-ScheduledTaskSettingsSet \`
+              -RestartCount 5 \`
+              -RestartInterval (New-TimeSpan -Minutes 1) \`
+              -StartWhenAvailable \`
+              -ExecutionTimeLimit ([System.TimeSpan]::Zero);
+
+$principal = New-ScheduledTaskPrincipal \`
+              -UserId 'SYSTEM' \`
+              -LogonType ServiceAccount \`
+              -RunLevel Highest;
+
+Register-ScheduledTask \`
+  -TaskName '${TASK_NAME}' \`
+  -Description 'Thermal Printer API Service (Node.js)' \`
+  -Action $action \`
+  -Trigger $trigger \`
+  -Settings $settings \`
+  -Principal $principal \`
+  -Force | Out-Null;
+
+Write-Output 'OK'
+`;
+
+console.log('\nMendaftarkan scheduled task...');
+const reg = ps(psCmd);
+if (reg.stdout !== 'OK' || reg.status !== 0) {
+  abort('Gagal mendaftarkan task:\n' + reg.stderr + '\n' + reg.stdout);
+}
+console.log('✓ Task terdaftar.');
+
+// ── Set delay 30 detik setelah boot (beri waktu sistem siap) ────────────────
+
+const delayCmd = `
+$task = Get-ScheduledTask -TaskName '${TASK_NAME}';
+$task.Triggers[0].Delay = 'PT30S';
+$task | Set-ScheduledTask | Out-Null;
+Write-Output 'OK'
+`;
+const delay = ps(delayCmd);
+if (delay.stdout === 'OK') {
+  console.log('✓ Startup delay: 30 detik (beri waktu sistem & printer siap).');
+} else {
+  console.warn('⚠ Tidak bisa set delay (tidak kritis):', delay.stderr);
+}
+
+// ── Jalankan sekarang ───────────────────────────────────────────────────────
+
+console.log('\nMenjalankan service...');
+const start = ps(`Start-ScheduledTask -TaskName '${TASK_NAME}'`);
+if (start.status !== 0) {
+  console.warn('⚠ Tidak bisa start sekarang (akan start otomatis saat reboot):', start.stderr);
+} else {
+  // Tunggu sebentar lalu cek status
+  execSync('timeout /t 3 /nobreak > nul', { shell: true });
+  const status = ps(`(Get-ScheduledTask -TaskName '${TASK_NAME}').State`);
+  console.log('✓ Status task: ' + status.stdout);
+}
+
+// Cek apakah node sudah berjalan
+const running = ps(`Get-Process -Name 'node' -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -like '*index.js*'} | Measure-Object | Select-Object -ExpandProperty Count`);
+if (parseInt(running.stdout) > 0) {
+  console.log('✓ Node.js process berjalan!');
+}
+
+// ── Ringkasan ───────────────────────────────────────────────────────────────
+
+console.log('');
+console.log('==============================================');
+console.log(' ✓ INSTALASI SELESAI');
+console.log('==============================================');
+console.log(' Task Name : ' + TASK_NAME);
+console.log(' URL       : http://localhost:' + PORT);
+console.log(' Node.js   : ' + NODE_EXE);
+console.log(' Startup   : Otomatis (delay 30 detik)');
+console.log(' Restart   : Otomatis jika crash (5x)');
+console.log('');
+console.log(' Kelola via Task Scheduler:');
+console.log('   taskschd.msc → Task Scheduler Library');
+console.log('   → "' + TASK_NAME + '"');
+console.log('');
+console.log(' Perintah manual:');
+console.log('   Start  : schtasks /run /tn "' + TASK_NAME + '"');
+console.log('   Stop   : schtasks /end /tn "' + TASK_NAME + '"');
+console.log('   Hapus  : node uninstall-service.js');
