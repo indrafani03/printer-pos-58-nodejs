@@ -1105,7 +1105,7 @@ function createQCLabelText(data, lang = currentLanguage, currency = currentCurre
   label += commands.BOLD_OFF;
 
   items.forEach((item, index) => {
-    const productName = cleanText(item.productName || "").substring(0, paperWidth - 3);
+    const productName = cleanText(item.productName || "");
     const qty = parseInt(item.quantity || 0);
 
     label += `${index + 1}. ${productName}` + commands.NEW_LINE;
