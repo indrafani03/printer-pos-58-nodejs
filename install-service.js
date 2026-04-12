@@ -7,7 +7,7 @@
  *   node install-service.js
  */
 
-const { execSync, spawnSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const path = require('path');
 const fs   = require('fs');
 
@@ -152,7 +152,7 @@ if (start.status !== 0) {
   console.warn('⚠ Tidak bisa start sekarang (akan start otomatis saat reboot):', start.stderr);
 } else {
   // Tunggu sebentar lalu cek status
-  execSync('timeout /t 3 /nobreak > nul', { shell: true });
+  ps('Start-Sleep -Seconds 3');
   const status = ps(`(Get-ScheduledTask -TaskName '${TASK_NAME}').State`);
   console.log('✓ Status task: ' + status.stdout);
 }
