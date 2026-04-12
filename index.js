@@ -38,6 +38,7 @@ let lastPrintTime = 0; // Track waktu print terakhir
 let isPrinting = false; // Lock untuk mencegah print bersamaan
 let currentLanguage = 'id';  // default Indonesian
 let currentCurrency = 'IDR'; // default Rupiah
+let currentPaperWidth = 32;  // 32 untuk 58mm, 48 untuk 80mm
 
 // Load config dari file (dipanggil saat startup)
 function loadConfig() {
@@ -57,7 +58,10 @@ function loadConfig() {
       if (cfg.currency) {
         currentCurrency = cfg.currency;
       }
-      console.log(`📂 Config loaded: printer="${currentPrinter}", lang="${currentLanguage}", currency="${currentCurrency}"`);
+      if (cfg.paperWidth && [32, 48].includes(cfg.paperWidth)) {
+        currentPaperWidth = cfg.paperWidth;
+      }
+      console.log(`📂 Config loaded: printer="${currentPrinter}", lang="${currentLanguage}", currency="${currentCurrency}", paperWidth=${currentPaperWidth}`);
     } else {
       console.log(`📂 No config file found, using defaults: printer="${DEFAULT_PRINTER}", lang="${currentLanguage}", currency="${currentCurrency}"`);
     }
@@ -74,10 +78,11 @@ function saveConfig() {
       autoReconnectEnabled,
       language: currentLanguage,
       currency: currentCurrency,
+      paperWidth: currentPaperWidth,
       savedAt: new Date().toISOString()
     };
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8');
-    console.log(`💾 Config saved: printer="${currentPrinter}", lang="${currentLanguage}", currency="${currentCurrency}"`);
+    console.log(`💾 Config saved: printer="${currentPrinter}", lang="${currentLanguage}", currency="${currentCurrency}", paperWidth=${currentPaperWidth}`);
   } catch (e) {
     console.error('⚠️  Failed to save config:', e.message);
   }
@@ -191,11 +196,13 @@ async function getLogoEscPos(logoUrl, paperWidthPx = 384) {
 
 // Gabungkan logo bytes + receipt text menjadi satu Buffer untuk dikirim ke printer
 // Logo disisipkan setelah INIT + ALIGN_CENTER (5 bytes pertama receipt)
-async function buildReceiptBuffer(receiptText, store) {
+async function buildReceiptBuffer(receiptText, store, paperWidth = currentPaperWidth) {
   const receiptBuffer = Buffer.from(receiptText, 'binary');
 
   if (store?.hasLogo && store?.logoUrl) {
-    const logoBytes = await getLogoEscPos(store.logoUrl);
+    // 58mm paper = 384px, 80mm paper = 576px (both @203dpi)
+    const paperWidthPx = paperWidth >= 48 ? 576 : 384;
+    const logoBytes = await getLogoEscPos(store.logoUrl, paperWidthPx);
     if (logoBytes) {
       // INIT = \x1B\x40 (2 bytes), ALIGN_CENTER = \x1B\x61\x01 (3 bytes)
       const insertPos = 5;
@@ -801,7 +808,7 @@ function formatDateTime(date = new Date(), lang = currentLanguage) {
   });
 }
 
-function createReceiptText(data, lang = currentLanguage, currency = currentCurrency) {
+function createReceiptText(data, lang = currentLanguage, currency = currentCurrency, paperWidth = currentPaperWidth) {
   // Translation helper
   const t = (key) => {
     const keys = key.split('.');
@@ -844,6 +851,10 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
     transactionId = receiptNumber || orderNumber || ""
   } = receiptData;
 
+  const SEP_EQUAL = '='.repeat(paperWidth);
+  const SEP_DASH  = '-'.repeat(paperWidth);
+  const addrWrap  = paperWidth - 2;
+
   let receipt = commands.INIT;
 
   // Header
@@ -855,7 +866,8 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
   const address = store.address || storeAddress;
   if (address) {
     const cleanAddress = cleanText(address);
-    const addressLines = cleanAddress.match(/.{1,30}(\s|$)/g) || [cleanAddress];
+    const addrRegex = new RegExp(`.{1,${addrWrap}}(\\s|$)`, 'g');
+    const addressLines = cleanAddress.match(addrRegex) || [cleanAddress];
     addressLines.forEach(line => {
       receipt += cleanText(line.trim()) + commands.NEW_LINE;
     });
@@ -865,7 +877,7 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
     receipt += "Tel: " + cleanText(store.phone) + commands.NEW_LINE;
   }
 
-  receipt += "================================" + commands.NEW_LINE;
+  receipt += SEP_EQUAL + commands.NEW_LINE;
   receipt += commands.ALIGN_LEFT;
   receipt += commands.NEW_LINE;
 
@@ -876,11 +888,11 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
   if (orderNumber) receipt += t('receipt.orderNo') + ": " + cleanText(orderNumber) + commands.NEW_LINE;
   if (cashierName || cashier) receipt += t('receipt.cashier') + ": " + cleanText(cashierName || cashier) + commands.NEW_LINE;
   if (customerName) receipt += t('receipt.customer') + ": " + cleanText(customerName) + commands.NEW_LINE;
-  receipt += "--------------------------------" + commands.NEW_LINE;
+  receipt += SEP_DASH + commands.NEW_LINE;
 
   // Items header
-  receipt += formatLine(t('receipt.item'), t('receipt.qty') + "  " + t('receipt.price')) + commands.NEW_LINE;
-  receipt += "--------------------------------" + commands.NEW_LINE;
+  receipt += formatLine(t('receipt.item'), t('receipt.qty') + "  " + t('receipt.price'), paperWidth) + commands.NEW_LINE;
+  receipt += SEP_DASH + commands.NEW_LINE;
 
   // Items
   items.forEach(item => {
@@ -907,83 +919,83 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
       const area = dimensions ? dimensions.area : null;
       if (area) {
         receipt += `  ${cleanText(ukuran)} (${area}m2)` + commands.NEW_LINE;
-        receipt += formatLine(`  ${formatCurrency(price, currency)}/m2 x ${area}`, formatCurrency(itemTotal, currency)) + commands.NEW_LINE;
+        receipt += formatLine(`  ${formatCurrency(price, currency)}/m2 x ${area}`, formatCurrency(itemTotal, currency), paperWidth) + commands.NEW_LINE;
       } else {
         receipt += `  ${t('receipt.size')}: ${cleanText(ukuran)}` + commands.NEW_LINE;
-        receipt += formatLine(`  ${qty} x ${formatCurrency(price, currency)}`, formatCurrency(itemTotal, currency)) + commands.NEW_LINE;
+        receipt += formatLine(`  ${qty} x ${formatCurrency(price, currency)}`, formatCurrency(itemTotal, currency), paperWidth) + commands.NEW_LINE;
       }
     } else if (stockType === "METERAN" && ukuran) {
       const length = item.meterLength || (dimensions ? dimensions.length : null);
       if (length) {
         receipt += `  ${t('receipt.length')}: ${length}m` + commands.NEW_LINE;
-        receipt += formatLine(`  ${formatCurrency(price, currency)}/m x ${length}`, formatCurrency(itemTotal, currency)) + commands.NEW_LINE;
+        receipt += formatLine(`  ${formatCurrency(price, currency)}/m x ${length}`, formatCurrency(itemTotal, currency), paperWidth) + commands.NEW_LINE;
       } else {
         receipt += `  ${t('receipt.size')}: ${cleanText(ukuran)}` + commands.NEW_LINE;
-        receipt += formatLine(`  ${qty} x ${formatCurrency(price, currency)}`, formatCurrency(itemTotal, currency)) + commands.NEW_LINE;
+        receipt += formatLine(`  ${qty} x ${formatCurrency(price, currency)}`, formatCurrency(itemTotal, currency), paperWidth) + commands.NEW_LINE;
       }
     } else {
       // Untuk produk non-AREA/METERAN, gunakan qty x price
-      receipt += formatLine(`  ${qty} x ${formatCurrency(price, currency)}`, formatCurrency(itemTotal, currency)) + commands.NEW_LINE;
+      receipt += formatLine(`  ${qty} x ${formatCurrency(price, currency)}`, formatCurrency(itemTotal, currency), paperWidth) + commands.NEW_LINE;
     }
 
     let finishingTotal = 0;
     if (item.finishings && Array.isArray(item.finishings) && item.finishings.length > 0) {
       item.finishings.forEach(finishing => {
-        const finishingName = cleanText(finishing.name || "").substring(0, 20);
+        const finishingName = cleanText(finishing.name || "").substring(0, paperWidth - 12);
         const finishingQty = finishing.finishingQty || finishing.quantity || 1;
         const finishingPrice = finishing.price || 0;
         const finishingItemTotal = finishingPrice * (finishing.multiplyByQty ? qty : 1) * finishingQty;
         finishingTotal += finishingItemTotal;
-        receipt += formatLine(`    + ${finishingName} (${finishingQty}x)`, formatCurrency(finishingItemTotal, currency)) + commands.NEW_LINE;
+        receipt += formatLine(`    + ${finishingName} (${finishingQty}x)`, formatCurrency(finishingItemTotal, currency), paperWidth) + commands.NEW_LINE;
       });
     }
 
     if (item.notes) {
-      const notes = cleanText(item.notes).substring(0, 28);
+      const notes = cleanText(item.notes).substring(0, paperWidth - 4);
       receipt += `    ${t('receipt.note')}: ${notes}` + commands.NEW_LINE;
     }
 
     // Tampilkan total item jika ada finishing
     if (finishingTotal > 0) {
       const finalItemTotal = itemTotal + finishingTotal;
-      receipt += formatLine("  " + t('receipt.totalItem') + ":", formatCurrency(finalItemTotal, currency)) + commands.NEW_LINE;
+      receipt += formatLine("  " + t('receipt.totalItem') + ":", formatCurrency(finalItemTotal, currency), paperWidth) + commands.NEW_LINE;
     }
   });
 
-  receipt += "--------------------------------" + commands.NEW_LINE;
+  receipt += SEP_DASH + commands.NEW_LINE;
 
   // Totals
   if (subtotal > 0 && subtotal !== totalAmount) {
-    receipt += formatLine(t('receipt.subtotal') + ":", formatCurrency(subtotal, currency)) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.subtotal') + ":", formatCurrency(subtotal, currency), paperWidth) + commands.NEW_LINE;
   }
 
   if (ppnAmount > 0) {
-    receipt += formatLine(t('receipt.ppn') + ":", formatCurrency(ppnAmount, currency)) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.ppn') + ":", formatCurrency(ppnAmount, currency), paperWidth) + commands.NEW_LINE;
   }
 
   if (discountAmount > 0) {
-    receipt += formatLine(t('receipt.discount') + ":", "-" + formatCurrency(discountAmount, currency)) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.discount') + ":", "-" + formatCurrency(discountAmount, currency), paperWidth) + commands.NEW_LINE;
   }
 
   if (designCost > 0) {
-    receipt += formatLine(t('receipt.designCost') + ":", formatCurrency(designCost, currency)) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.designCost') + ":", formatCurrency(designCost, currency), paperWidth) + commands.NEW_LINE;
     if (designerName) {
       receipt += `  (Designer: ${cleanText(designerName)})` + commands.NEW_LINE;
     }
   } else if (additionalServiceValue > 0) {
-    receipt += formatLine(t('receipt.additionalCost') + ":", formatCurrency(additionalServiceValue, currency)) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.additionalCost') + ":", formatCurrency(additionalServiceValue, currency), paperWidth) + commands.NEW_LINE;
     if (additionalServiceNotes) {
-      const notes = cleanText(additionalServiceNotes).substring(0, 28);
+      const notes = cleanText(additionalServiceNotes).substring(0, paperWidth - 4);
       receipt += `  (${notes})` + commands.NEW_LINE;
     }
   }
 
   receipt += commands.BOLD_ON;
-  receipt += formatLine(t('receipt.total') + ":", formatCurrency(totalAmount || total, currency)) + commands.NEW_LINE;
+  receipt += formatLine(t('receipt.total') + ":", formatCurrency(totalAmount || total, currency), paperWidth) + commands.NEW_LINE;
   receipt += commands.BOLD_OFF;
 
   if (paymentMethod) {
-    receipt += formatLine(t('receipt.paymentMethod') + ":", cleanText(paymentMethod)) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.paymentMethod') + ":", cleanText(paymentMethod), paperWidth) + commands.NEW_LINE;
   }
 
   // Tampilkan jenis pembayaran
@@ -993,11 +1005,11 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
     if (typeUpper === 'DOWNPAYMENT') typeLabel = t('receipt.downpayment');
     else if (typeUpper === 'HUTANG') typeLabel = t('receipt.hutang');
     else if (typeUpper === 'LUNAS') typeLabel = t('receipt.lunas');
-    receipt += formatLine(t('receipt.paymentType') + ":", typeLabel) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.paymentType') + ":", typeLabel, paperWidth) + commands.NEW_LINE;
   }
 
   if ((cashReceived || payment) > 0) {
-    receipt += formatLine(t('receipt.paid') + ":", formatCurrency(cashReceived || payment, currency)) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.paid') + ":", formatCurrency(cashReceived || payment, currency), paperWidth) + commands.NEW_LINE;
   }
 
   // Tampilkan sisa bayar untuk DOWNPAYMENT atau HUTANG
@@ -1007,7 +1019,7 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
     const remaining = orderTotal - paid;
     if (remaining > 0) {
       receipt += commands.BOLD_ON;
-      receipt += formatLine(t('receipt.remaining') + ":", formatCurrency(remaining, currency)) + commands.NEW_LINE;
+      receipt += formatLine(t('receipt.remaining') + ":", formatCurrency(remaining, currency), paperWidth) + commands.NEW_LINE;
       receipt += commands.BOLD_OFF;
     }
   }
@@ -1595,6 +1607,15 @@ app.get('/printer/ui', (req, res) => {
           </select>
         </div>
 
+        <!-- Paper Width -->
+        <div>
+          <label style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 8px;" id="labelPaperWidth">Ukuran Kertas:</label>
+          <select id="selectPaperWidth" class="setting-select" onchange="onPaperWidthChange()">
+            <option value="32">58mm (32 karakter)</option>
+            <option value="48">80mm (48 karakter)</option>
+          </select>
+        </div>
+
         <button class="btn btn-primary" onclick="saveSettings()" id="btnSaveSettings">
           💾 Simpan Pengaturan
         </button>
@@ -1626,6 +1647,7 @@ app.get('/printer/ui', (req, res) => {
   let monitorEnabled = false;
   let currentLanguage = 'id';
   let currentCurrency = 'IDR';
+  let currentPaperWidth = 32;
 
   // Client-side translations (UI only)
   const translations = {
@@ -1633,6 +1655,7 @@ app.get('/printer/ui', (req, res) => {
       settings: "Pengaturan",
       language: "Bahasa",
       currency: "Mata Uang",
+      paperWidth: "Ukuran Kertas",
       saveSettings: "Simpan Pengaturan",
       logTitle: "Log Aktivitas",
       clear: "Bersihkan",
@@ -1666,6 +1689,7 @@ app.get('/printer/ui', (req, res) => {
       settings: "Settings",
       language: "Language",
       currency: "Currency",
+      paperWidth: "Paper Size",
       saveSettings: "Save Settings",
       logTitle: "Activity Log",
       clear: "Clear",
@@ -1935,6 +1959,7 @@ app.get('/printer/ui', (req, res) => {
     document.getElementById('settingsTitle').innerHTML = '⚙️ ' + t('settings');
     document.getElementById('labelLanguage').textContent = t('language') + ':';
     document.getElementById('labelCurrency').textContent = t('currency') + ':';
+    document.getElementById('labelPaperWidth').textContent = t('paperWidth') + ':';
     document.getElementById('btnSaveSettings').innerHTML = '💾 ' + t('saveSettings');
     document.getElementById('logTitle').innerHTML = '📋 ' + t('logTitle');
     document.getElementById('btnClearLog').textContent = t('clear');
@@ -1986,6 +2011,10 @@ app.get('/printer/ui', (req, res) => {
     currentCurrency = document.getElementById('selectCurrency').value;
   }
 
+  function onPaperWidthChange() {
+    currentPaperWidth = parseInt(document.getElementById('selectPaperWidth').value);
+  }
+
   async function saveSettings() {
     const btn = document.getElementById('btnSaveSettings');
     btn.disabled = true;
@@ -1997,7 +2026,8 @@ app.get('/printer/ui', (req, res) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           language: currentLanguage,
-          currency: currentCurrency
+          currency: currentCurrency,
+          paperWidth: currentPaperWidth
         })
       });
       const d = await r.json();
@@ -2030,6 +2060,10 @@ app.get('/printer/ui', (req, res) => {
         if (d.currency) {
           currentCurrency = d.currency;
           document.getElementById('selectCurrency').value = currentCurrency;
+        }
+        if (d.paperWidth) {
+          currentPaperWidth = d.paperWidth;
+          document.getElementById('selectPaperWidth').value = String(currentPaperWidth);
         }
         updateUILanguage();
       }
@@ -2232,19 +2266,20 @@ app.post('/printer/auto-reconnect', (req, res) => {
   }
 });
 
-// Get current settings (language and currency)
+// Get current settings (language, currency, paperWidth)
 app.get('/settings/get', (req, res) => {
   res.json({
     success: true,
     language: currentLanguage,
-    currency: currentCurrency
+    currency: currentCurrency,
+    paperWidth: currentPaperWidth
   });
 });
 
-// Update settings (language and currency)
+// Update settings (language, currency, paperWidth)
 app.post('/settings/update', (req, res) => {
   try {
-    const { language, currency } = req.body;
+    const { language, currency, paperWidth } = req.body;
 
     if (language && ['id', 'en'].includes(language)) {
       currentLanguage = language;
@@ -2254,13 +2289,18 @@ app.post('/settings/update', (req, res) => {
       currentCurrency = currency;
     }
 
+    if (paperWidth && [32, 48].includes(Number(paperWidth))) {
+      currentPaperWidth = Number(paperWidth);
+    }
+
     saveConfig(); // Save to file
 
     res.json({
       success: true,
       message: translations[currentLanguage].messages.settingsSaved,
       language: currentLanguage,
-      currency: currentCurrency
+      currency: currentCurrency,
+      paperWidth: currentPaperWidth
     });
   } catch (error) {
     res.status(500).json({
