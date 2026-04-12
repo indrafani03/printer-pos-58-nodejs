@@ -39,6 +39,7 @@ let isPrinting = false; // Lock untuk mencegah print bersamaan
 let currentLanguage = 'id';  // default Indonesian
 let currentCurrency = 'IDR'; // default Rupiah
 let currentPaperWidth = 32;  // 32 untuk 58mm, 48 untuk 80mm
+let customText = {};          // override teks struk/label, e.g. { "receipt.thankYou": "Makasih!" }
 
 // Load config dari file (dipanggil saat startup)
 function loadConfig() {
@@ -61,6 +62,9 @@ function loadConfig() {
       if (cfg.paperWidth && [32, 48].includes(cfg.paperWidth)) {
         currentPaperWidth = cfg.paperWidth;
       }
+      if (cfg.customText && typeof cfg.customText === 'object') {
+        customText = cfg.customText;
+      }
       console.log(`📂 Config loaded: printer="${currentPrinter}", lang="${currentLanguage}", currency="${currentCurrency}", paperWidth=${currentPaperWidth}`);
     } else {
       console.log(`📂 No config file found, using defaults: printer="${DEFAULT_PRINTER}", lang="${currentLanguage}", currency="${currentCurrency}"`);
@@ -79,6 +83,7 @@ function saveConfig() {
       language: currentLanguage,
       currency: currentCurrency,
       paperWidth: currentPaperWidth,
+      customText,
       savedAt: new Date().toISOString()
     };
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8');
@@ -94,6 +99,15 @@ loadConfig();
 // Debug logger
 function debugLog(...args) {
   if (DEBUG_MODE) console.log(...args);
+}
+
+// Resolve teks dengan prioritas: customText > translations[lang]
+function resolveText(key, lang) {
+  if (customText[key] !== undefined && customText[key] !== '') return customText[key];
+  const parts = key.split('.');
+  let value = translations[lang];
+  for (const k of parts) value = value?.[k];
+  return value || key;
 }
 
 // Escape HTML untuk keamanan
@@ -809,15 +823,8 @@ function formatDateTime(date = new Date(), lang = currentLanguage) {
 }
 
 function createReceiptText(data, lang = currentLanguage, currency = currentCurrency, paperWidth = currentPaperWidth) {
-  // Translation helper
-  const t = (key) => {
-    const keys = key.split('.');
-    let value = translations[lang];
-    for (const k of keys) {
-      value = value?.[k];
-    }
-    return value || key;
-  };
+  // Translation helper — customText overrides first
+  const t = (key) => resolveText(key, lang);
 
   const receiptData = data.receiptData || data;
   const {
@@ -1042,16 +1049,9 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
   return receipt;
 }
 
-function createQCLabelText(data, lang = currentLanguage, currency = currentCurrency) {
-  // Translation helper
-  const t = (key) => {
-    const keys = key.split('.');
-    let value = translations[lang];
-    for (const k of keys) {
-      value = value?.[k];
-    }
-    return value || key;
-  };
+function createQCLabelText(data, lang = currentLanguage, currency = currentCurrency, paperWidth = currentPaperWidth) {
+  // Translation helper — customText overrides first
+  const t = (key) => resolveText(key, lang);
 
   const {
     orderId = "",
@@ -1066,6 +1066,9 @@ function createQCLabelText(data, lang = currentLanguage, currency = currentCurre
     createdAt = ""
   } = data;
 
+  const SEP_EQUAL = '='.repeat(paperWidth);
+  const SEP_DASH  = '-'.repeat(paperWidth);
+
   let label = commands.INIT;
 
   // Header
@@ -1075,7 +1078,7 @@ function createQCLabelText(data, lang = currentLanguage, currency = currentCurre
   label += t('qc.title') + commands.NEW_LINE;
   label += commands.NORMAL_SIZE;
   label += commands.BOLD_OFF;
-  label += "================================" + commands.NEW_LINE;
+  label += SEP_EQUAL + commands.NEW_LINE;
   label += commands.ALIGN_LEFT;
   label += commands.NEW_LINE;
 
@@ -1086,14 +1089,14 @@ function createQCLabelText(data, lang = currentLanguage, currency = currentCurre
   const date = createdAt ? formatDateTime(createdAt, lang) : "";
   if (date) label += t('qc.date') + ": " + cleanText(date) + commands.NEW_LINE;
 
-  label += "--------------------------------" + commands.NEW_LINE;
+  label += SEP_DASH + commands.NEW_LINE;
 
   // Customer Info
   if (customerName) label += t('qc.customer') + ": " + cleanText(customerName) + commands.NEW_LINE;
   if (customerPhone) label += t('qc.phone') + ": " + cleanText(customerPhone) + commands.NEW_LINE;
 
   if (customerName || customerPhone) {
-    label += "--------------------------------" + commands.NEW_LINE;
+    label += SEP_DASH + commands.NEW_LINE;
   }
 
   // Items
@@ -1102,7 +1105,7 @@ function createQCLabelText(data, lang = currentLanguage, currency = currentCurre
   label += commands.BOLD_OFF;
 
   items.forEach((item, index) => {
-    const productName = cleanText(item.productName || "").substring(0, 30);
+    const productName = cleanText(item.productName || "").substring(0, paperWidth - 3);
     const qty = parseInt(item.quantity || 0);
 
     label += `${index + 1}. ${productName}` + commands.NEW_LINE;
@@ -1112,7 +1115,7 @@ function createQCLabelText(data, lang = currentLanguage, currency = currentCurre
     if (item.finishings && Array.isArray(item.finishings) && item.finishings.length > 0) {
       label += "   " + t('qc.finishing') + ":" + commands.NEW_LINE;
       item.finishings.forEach(finishing => {
-        const finishingName = cleanText(finishing.name || "").substring(0, 26);
+        const finishingName = cleanText(finishing.name || "").substring(0, paperWidth - 5);
         label += `   - ${finishingName}` + commands.NEW_LINE;
       });
     }
@@ -1120,7 +1123,7 @@ function createQCLabelText(data, lang = currentLanguage, currency = currentCurre
     label += commands.NEW_LINE;
   });
 
-  label += "--------------------------------" + commands.NEW_LINE;
+  label += SEP_DASH + commands.NEW_LINE;
 
   // QC Status
   label += commands.BOLD_ON;
@@ -1142,7 +1145,8 @@ function createQCLabelText(data, lang = currentLanguage, currency = currentCurre
   if (qcNotes) {
     label += t('qc.notes') + ":" + commands.NEW_LINE;
     const notes = cleanText(qcNotes);
-    const noteLines = notes.match(/.{1,30}(\s|$)/g) || [notes];
+    const noteRegex = new RegExp(`.{1,${paperWidth - 2}}(\\s|$)`, 'g');
+    const noteLines = notes.match(noteRegex) || [notes];
     noteLines.forEach(line => {
       label += cleanText(line.trim()) + commands.NEW_LINE;
     });
@@ -1623,6 +1627,19 @@ app.get('/printer/ui', (req, res) => {
     </div>
   </div>
 
+  <!-- Custom Text -->
+  <div class="section">
+    <div class="section-header" onclick="toggleCustomText()" style="cursor:pointer;user-select:none;">
+      <h2 id="customTextTitle">✏️ Custom Teks Struk</h2>
+      <span id="customTextToggle" style="font-size:12px;opacity:0.6;">▼ Tampilkan</span>
+    </div>
+    <div id="customTextBody" class="section-body" style="display:none;">
+      <p style="font-size:12px;opacity:0.6;margin-bottom:12px;" id="customTextDesc">Kosongkan field untuk menggunakan teks default. Perubahan berlaku langsung saat disimpan.</p>
+      <div id="customTextFields" style="display:grid;gap:10px;"></div>
+      <button class="btn btn-primary" style="margin-top:14px;" onclick="saveCustomText()" id="btnSaveCustomText">💾 Simpan Custom Teks</button>
+    </div>
+  </div>
+
   <!-- Log -->
   <div class="section">
     <div class="section-header">
@@ -2072,9 +2089,142 @@ app.get('/printer/ui', (req, res) => {
     }
   }
 
+  // ── Custom Text ───────────────────────────────────────
+  // Definisi field yang bisa di-override (key: label tampilan)
+  const CUSTOM_TEXT_FIELDS = [
+    { group: '— Struk / Receipt —', fields: [
+      { key: 'receipt.date',          label: 'Label Tanggal' },
+      { key: 'receipt.receiptNo',     label: 'Label No. Struk' },
+      { key: 'receipt.orderNo',       label: 'Label No. Order' },
+      { key: 'receipt.cashier',       label: 'Label Kasir' },
+      { key: 'receipt.customer',      label: 'Label Customer' },
+      { key: 'receipt.item',          label: 'Header kolom Item' },
+      { key: 'receipt.qty',           label: 'Header kolom Qty' },
+      { key: 'receipt.price',         label: 'Header kolom Harga' },
+      { key: 'receipt.subtotal',      label: 'Label Subtotal' },
+      { key: 'receipt.discount',      label: 'Label Diskon' },
+      { key: 'receipt.ppn',           label: 'Label PPN/Pajak' },
+      { key: 'receipt.designCost',    label: 'Label Biaya Desain' },
+      { key: 'receipt.additionalCost',label: 'Label Biaya Tambahan' },
+      { key: 'receipt.total',         label: 'Label TOTAL' },
+      { key: 'receipt.paymentMethod', label: 'Label Metode Bayar' },
+      { key: 'receipt.paymentType',   label: 'Label Jenis Bayar' },
+      { key: 'receipt.downpayment',   label: 'Teks DP' },
+      { key: 'receipt.hutang',        label: 'Teks Hutang' },
+      { key: 'receipt.lunas',         label: 'Teks Lunas' },
+      { key: 'receipt.paid',          label: 'Label Bayar' },
+      { key: 'receipt.change',        label: 'Label Kembalian' },
+      { key: 'receipt.remaining',     label: 'Label Sisa Bayar' },
+      { key: 'receipt.thankYou',      label: 'Pesan Terima Kasih' },
+      { key: 'receipt.comeAgain',     label: 'Pesan Sampai Jumpa' },
+    ]},
+    { group: '— Label QC —', fields: [
+      { key: 'qc.title',    label: 'Judul Label QC' },
+      { key: 'qc.orderNo',  label: 'Label No. Order' },
+      { key: 'qc.date',     label: 'Label Tanggal' },
+      { key: 'qc.customer', label: 'Label Customer' },
+      { key: 'qc.phone',    label: 'Label Telepon' },
+      { key: 'qc.items',    label: 'Header Items' },
+      { key: 'qc.qty',      label: 'Label Qty' },
+      { key: 'qc.finishing',label: 'Label Finishing' },
+      { key: 'qc.status',   label: 'Label Status' },
+      { key: 'qc.passed',   label: 'Teks QC Lulus' },
+      { key: 'qc.failed',   label: 'Teks QC Gagal' },
+      { key: 'qc.notes',    label: 'Label Catatan QC' },
+      { key: 'qc.qcBy',     label: 'Label QC By' },
+      { key: 'qc.endLabel', label: 'Teks Akhir Label' },
+    ]},
+  ];
+
+  let currentCustomText = {};
+  let customTextVisible = false;
+
+  function toggleCustomText() {
+    customTextVisible = !customTextVisible;
+    document.getElementById('customTextBody').style.display = customTextVisible ? 'block' : 'none';
+    document.getElementById('customTextToggle').textContent = customTextVisible ? '▲ Sembunyikan' : '▼ Tampilkan';
+    if (customTextVisible && document.getElementById('customTextFields').childElementCount === 0) {
+      renderCustomTextFields();
+    }
+  }
+
+  // Ambil default value dari bahasa aktif (client-side translations tidak punya receipt.*,
+  // jadi kita tampilkan placeholder dari server via currentCustomText)
+  function renderCustomTextFields() {
+    const container = document.getElementById('customTextFields');
+    container.innerHTML = '';
+    CUSTOM_TEXT_FIELDS.forEach(({ group, fields }) => {
+      const groupEl = document.createElement('div');
+      groupEl.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.05em;opacity:0.5;padding:6px 0 2px;';
+      groupEl.textContent = group;
+      container.appendChild(groupEl);
+      fields.forEach(({ key, label }) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:grid;grid-template-columns:160px 1fr;gap:8px;align-items:center;';
+        const lbl = document.createElement('label');
+        lbl.style.cssText = 'font-size:12px;opacity:0.75;';
+        lbl.textContent = label;
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.id = 'ct_' + key.replace('.', '_');
+        inp.dataset.key = key;
+        inp.value = currentCustomText[key] || '';
+        inp.placeholder = '(default)';
+        inp.style.cssText = 'background:#1a1d27;border:1px solid #2d3147;color:#e2e8f0;padding:5px 8px;border-radius:6px;font-size:12px;width:100%;';
+        row.appendChild(lbl);
+        row.appendChild(inp);
+        container.appendChild(row);
+      });
+    });
+  }
+
+  async function loadCustomText() {
+    try {
+      const r = await fetch(BASE + '/settings/custom-text');
+      const d = await r.json();
+      if (d.success) {
+        currentCustomText = d.customText || {};
+        if (customTextVisible) renderCustomTextFields();
+      }
+    } catch (e) {
+      console.error('Failed to load custom text:', e);
+    }
+  }
+
+  async function saveCustomText() {
+    const btn = document.getElementById('btnSaveCustomText');
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+      const payload = {};
+      document.querySelectorAll('#customTextFields input[data-key]').forEach(inp => {
+        payload[inp.dataset.key] = inp.value.trim();
+      });
+      const r = await fetch(BASE + '/settings/custom-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const d = await r.json();
+      if (d.success) {
+        currentCustomText = d.customText || {};
+        toast('Custom teks disimpan!', 'success');
+        addLog('Custom teks disimpan', 'ok');
+      } else {
+        toast('Gagal menyimpan', 'error');
+      }
+    } catch (e) {
+      toast('Error: ' + e.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '💾 Simpan Custom Teks';
+    }
+  }
+
   // ── Init ──────────────────────────────────────────────
   async function init() {
     await loadSettings();
+    await loadCustomText();
     await refreshStatus();
     // Also do a fresh scan to populate list
     try {
@@ -2263,6 +2413,32 @@ app.post('/printer/auto-reconnect', (req, res) => {
       message: 'Failed to change auto-reconnect setting',
       error: error.message
     });
+  }
+});
+
+// Get custom text overrides
+app.get('/settings/custom-text', (req, res) => {
+  res.json({ success: true, customText });
+});
+
+// Update custom text overrides
+app.post('/settings/custom-text', (req, res) => {
+  try {
+    const incoming = req.body;
+    if (typeof incoming !== 'object' || Array.isArray(incoming)) {
+      return res.status(400).json({ success: false, message: 'Invalid payload' });
+    }
+    // Allowed keys: only receipt.* and qc.*
+    const allowed = /^(receipt|qc)\.[a-zA-Z]+$/;
+    const updated = {};
+    for (const [key, val] of Object.entries(incoming)) {
+      if (allowed.test(key)) updated[key] = String(val);
+    }
+    customText = updated;
+    saveConfig();
+    res.json({ success: true, customText });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
   }
 });
 
