@@ -1015,10 +1015,14 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
   receipt += SEP_DASH + commands.NEW_LINE;
 
   // Totals
-  if (subtotal > 0 && subtotal !== totalAmount) {
-    // Ganti label Subtotal jadi Total ketika pembayaran 0
-    const subtotalLabel = (!totalAmount || totalAmount === 0) ? t('receipt.total') : t('receipt.subtotal');
-    receipt += formatLine(subtotalLabel + ":", formatCurrency(subtotal, currency), paperWidth) + commands.NEW_LINE;
+  // Tentukan apakah baris TOTAL akhir (dengan totalAmount) akan tampil
+  const isDP = paymentType && (paymentType.toUpperCase() === 'DOWNPAYMENT' || paymentType.toUpperCase() === 'DP');
+  const totalValue = totalAmount || total || 0;
+  const willShowFinalTotal = !isDP && totalValue > 0;
+
+  // Hanya tampilkan TOTAL dari subtotal jika TOTAL akhir tidak akan tampil (mencegah double TOTAL)
+  if (subtotal > 0 && subtotal !== totalAmount && !willShowFinalTotal) {
+    receipt += formatLine(t('receipt.total') + ":", formatCurrency(subtotal, currency), paperWidth) + commands.NEW_LINE;
   }
 
   if (ppnAmount > 0) {
@@ -1042,13 +1046,15 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
     }
   }
 
-  // Sembunyikan baris TOTAL ketika jenis pembayaran DP atau pembayaran 0
-  const isDP = paymentType && (paymentType.toUpperCase() === 'DOWNPAYMENT' || paymentType.toUpperCase() === 'DP');
-  const totalValue = totalAmount || total || 0;
-  if (!isDP && totalValue > 0) {
+  if (willShowFinalTotal) {
     receipt += commands.BOLD_ON;
     receipt += formatLine(t('receipt.total') + ":", formatCurrency(totalValue, currency), paperWidth) + commands.NEW_LINE;
     receipt += commands.BOLD_OFF;
+  }
+
+  // Bayar di bawah TOTAL
+  if ((cashReceived || payment) > 0) {
+    receipt += formatLine(t('receipt.paid') + ":", formatCurrency(cashReceived || payment, currency), paperWidth) + commands.NEW_LINE;
   }
 
   // Sembunyikan Cara Bayar jika jenis pembayaran HUTANG
@@ -1065,10 +1071,6 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
     else if (typeUpper === 'HUTANG') typeLabel = t('receipt.hutang');
     else if (typeUpper === 'LUNAS') typeLabel = t('receipt.lunas');
     receipt += formatLine(t('receipt.paymentType') + ":", typeLabel, paperWidth) + commands.NEW_LINE;
-  }
-
-  if ((cashReceived || payment) > 0) {
-    receipt += formatLine(t('receipt.paid') + ":", formatCurrency(cashReceived || payment, currency), paperWidth) + commands.NEW_LINE;
   }
 
   // Tampilkan sisa bayar untuk DOWNPAYMENT atau HUTANG
