@@ -1042,9 +1042,13 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
     }
   }
 
-  receipt += commands.BOLD_ON;
-  receipt += formatLine(t('receipt.total') + ":", formatCurrency(totalAmount || total, currency), paperWidth) + commands.NEW_LINE;
-  receipt += commands.BOLD_OFF;
+  // Sembunyikan baris TOTAL ketika jenis pembayaran DP (DOWNPAYMENT)
+  const isDP = paymentType && (paymentType.toUpperCase() === 'DOWNPAYMENT' || paymentType.toUpperCase() === 'DP');
+  if (!isDP) {
+    receipt += commands.BOLD_ON;
+    receipt += formatLine(t('receipt.total') + ":", formatCurrency(totalAmount || total, currency), paperWidth) + commands.NEW_LINE;
+    receipt += commands.BOLD_OFF;
+  }
 
   if (paymentMethod) {
     receipt += formatLine(t('receipt.paymentMethod') + ":", cleanText(paymentMethod), paperWidth) + commands.NEW_LINE;
