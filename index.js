@@ -954,8 +954,9 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
     const stockType = (item.stockType || "").toUpperCase();
     const ukuran = item.ukuran || "";
     const dimensions = item.dimensions || null;
-    // Untuk AREA/METERAN, gunakan item.total karena sudah dikalikan dengan area/panjang
-    const itemTotal = item.total || (price * qty);
+    // Gunakan productTotal (harga produk saja, tanpa finishing) agar finishing tidak terhitung 2x
+    // Fallback ke item.total jika productTotal tidak ada (backward compatibility)
+    const itemTotal = item.productTotal != null ? item.productTotal : (item.total || (price * qty));
 
     receipt += name + commands.NEW_LINE;
 
