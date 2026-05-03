@@ -1016,7 +1016,9 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
 
   // Totals
   if (subtotal > 0 && subtotal !== totalAmount) {
-    receipt += formatLine(t('receipt.subtotal') + ":", formatCurrency(subtotal, currency), paperWidth) + commands.NEW_LINE;
+    // Ganti label Subtotal jadi Total ketika pembayaran 0
+    const subtotalLabel = (!totalAmount || totalAmount === 0) ? t('receipt.total') : t('receipt.subtotal');
+    receipt += formatLine(subtotalLabel + ":", formatCurrency(subtotal, currency), paperWidth) + commands.NEW_LINE;
   }
 
   if (ppnAmount > 0) {
@@ -1040,15 +1042,18 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
     }
   }
 
-  // Sembunyikan baris TOTAL ketika jenis pembayaran DP (DOWNPAYMENT)
+  // Sembunyikan baris TOTAL ketika jenis pembayaran DP atau pembayaran 0
   const isDP = paymentType && (paymentType.toUpperCase() === 'DOWNPAYMENT' || paymentType.toUpperCase() === 'DP');
-  if (!isDP) {
+  const totalValue = totalAmount || total || 0;
+  if (!isDP && totalValue > 0) {
     receipt += commands.BOLD_ON;
-    receipt += formatLine(t('receipt.total') + ":", formatCurrency(totalAmount || total, currency), paperWidth) + commands.NEW_LINE;
+    receipt += formatLine(t('receipt.total') + ":", formatCurrency(totalValue, currency), paperWidth) + commands.NEW_LINE;
     receipt += commands.BOLD_OFF;
   }
 
-  if (paymentMethod) {
+  // Sembunyikan Cara Bayar jika jenis pembayaran HUTANG
+  const isHutang = paymentType && paymentType.toUpperCase() === 'HUTANG';
+  if (paymentMethod && !isHutang) {
     receipt += formatLine(t('receipt.paymentMethod') + ":", cleanText(paymentMethod), paperWidth) + commands.NEW_LINE;
   }
 
