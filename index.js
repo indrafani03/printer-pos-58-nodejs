@@ -965,8 +965,8 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
       const area = dimensions ? dimensions.area : null;
       if (area) {
         const left = qty > 1
-          ? `  ${qty} x ${area} x ${formatCurrency(price, currency)}`
-          : `  ${area} x ${formatCurrency(price, currency)}`;
+          ? `  ${qty} x ${cleanText(ukuran)} x ${formatCurrency(price, currency)}`
+          : `  ${cleanText(ukuran)} x ${formatCurrency(price, currency)}`;
         receipt += formatLine(left, formatCurrency(itemTotal, currency), paperWidth) + commands.NEW_LINE;
       } else {
         receipt += `  ${t('receipt.size')}: ${cleanText(ukuran)}` + commands.NEW_LINE;
@@ -976,8 +976,8 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
       const length = item.meterLength || (dimensions ? dimensions.length : null);
       if (length) {
         const left = qty > 1
-          ? `  ${qty} x ${length} x ${formatCurrency(price, currency)}`
-          : `  ${length} x ${formatCurrency(price, currency)}`;
+          ? `  ${qty} x ${cleanText(ukuran)} x ${formatCurrency(price, currency)}`
+          : `  ${cleanText(ukuran)} x ${formatCurrency(price, currency)}`;
         receipt += formatLine(left, formatCurrency(itemTotal, currency), paperWidth) + commands.NEW_LINE;
       } else {
         receipt += `  ${t('receipt.size')}: ${cleanText(ukuran)}` + commands.NEW_LINE;
