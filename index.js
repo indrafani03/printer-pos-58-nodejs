@@ -290,12 +290,18 @@ const translations = {
       phone: "Telp",
       items: "ITEMS",
       qty: "Qty",
+      size: "Ukuran",
+      length: "Panjang",
       finishing: "Finishing",
       status: "STATUS",
       passed: "LULUS QC",
       failed: "GAGAL QC",
       notes: "Catatan QC",
       qcBy: "QC By",
+      payment: "STATUS BAYAR",
+      paid: "LUNAS",
+      unpaid: "BELUM BAYAR",
+      partial: "DP",
       endLabel: "-- END OF LABEL --"
     },
     ui: {
@@ -407,12 +413,18 @@ const translations = {
       phone: "Phone",
       items: "ITEMS",
       qty: "Qty",
+      size: "Size",
+      length: "Length",
       finishing: "Finishing",
       status: "STATUS",
       passed: "QC PASSED",
       failed: "QC FAILED",
       notes: "QC Notes",
       qcBy: "QC By",
+      payment: "PAYMENT STATUS",
+      paid: "PAID",
+      unpaid: "UNPAID",
+      partial: "PARTIAL",
       endLabel: "-- END OF LABEL --"
     },
     ui: {
@@ -1069,6 +1081,7 @@ function createQCLabelText(data, lang = currentLanguage, currency = currentCurre
     qcNotes = "",
     qcBy = "",
     totalAmount = "",
+    paidStatus = "",
     createdAt = ""
   } = data;
 
@@ -1113,9 +1126,31 @@ function createQCLabelText(data, lang = currentLanguage, currency = currentCurre
   items.forEach((item, index) => {
     const productName = cleanText(item.productName || "");
     const qty = parseInt(item.quantity || 0);
+    const stockType = (item.stockType || "").toUpperCase();
+    const ukuran = item.ukuran || "";
+    const dimensions = item.dimensions || null;
 
     label += `${index + 1}. ${productName}` + commands.NEW_LINE;
     label += `   ${t('qc.qty')}: ${qty}` + commands.NEW_LINE;
+
+    // Tampilkan ukuran untuk produk METERAN
+    if (stockType === "METERAN") {
+      const length = item.meterLength || (dimensions ? dimensions.length : null);
+      const unit = item.meterUnit || "m";
+      if (length) {
+        label += `   ${t('qc.length')}: ${length}${unit}` + commands.NEW_LINE;
+      } else if (ukuran) {
+        label += `   ${t('qc.size')}: ${cleanText(ukuran)}` + commands.NEW_LINE;
+      }
+    } else if (stockType === "AREA" || stockType === "M2") {
+      // Tampilkan ukuran untuk produk AREA / m2
+      if (ukuran) {
+        label += `   ${t('qc.size')}: ${cleanText(ukuran)}` + commands.NEW_LINE;
+      } else if (dimensions && dimensions.length && dimensions.width) {
+        const unit = dimensions.unit || "cm";
+        label += `   ${t('qc.size')}: ${dimensions.length}x${dimensions.width}${unit}` + commands.NEW_LINE;
+      }
+    }
 
     // Finishings
     if (item.finishings && Array.isArray(item.finishings) && item.finishings.length > 0) {
@@ -1162,6 +1197,29 @@ function createQCLabelText(data, lang = currentLanguage, currency = currentCurre
   // QC By
   if (qcBy) {
     label += t('qc.qcBy') + ": " + cleanText(qcBy) + commands.NEW_LINE;
+  }
+
+  // Payment Status
+  if (paidStatus) {
+    const paidUpper = String(paidStatus).toUpperCase();
+    let paidLabel;
+    if (paidUpper === "PAID" || paidUpper === "LUNAS") {
+      paidLabel = t('qc.paid');
+    } else if (paidUpper === "UNPAID" || paidUpper === "BELUM BAYAR" || paidUpper === "BELUM_BAYAR") {
+      paidLabel = t('qc.unpaid');
+    } else if (paidUpper === "PARTIAL" || paidUpper === "DP" || paidUpper === "DOWNPAYMENT") {
+      paidLabel = t('qc.partial');
+    } else {
+      paidLabel = cleanText(paidStatus);
+    }
+
+    label += commands.NEW_LINE;
+    label += SEP_DASH + commands.NEW_LINE;
+    label += commands.BOLD_ON;
+    label += commands.ALIGN_CENTER;
+    label += t('qc.payment') + ": " + paidLabel + commands.NEW_LINE;
+    label += commands.ALIGN_LEFT;
+    label += commands.BOLD_OFF;
   }
 
   label += commands.NEW_LINE;
@@ -2132,12 +2190,18 @@ app.get('/printer/ui', (req, res) => {
       { key: 'qc.phone',    label: 'Label Telepon' },
       { key: 'qc.items',    label: 'Header Items' },
       { key: 'qc.qty',      label: 'Label Qty' },
+      { key: 'qc.size',     label: 'Label Ukuran' },
+      { key: 'qc.length',   label: 'Label Panjang' },
       { key: 'qc.finishing',label: 'Label Finishing' },
       { key: 'qc.status',   label: 'Label Status' },
       { key: 'qc.passed',   label: 'Teks QC Lulus' },
       { key: 'qc.failed',   label: 'Teks QC Gagal' },
       { key: 'qc.notes',    label: 'Label Catatan QC' },
       { key: 'qc.qcBy',     label: 'Label QC By' },
+      { key: 'qc.payment',  label: 'Label Status Bayar' },
+      { key: 'qc.paid',     label: 'Teks Lunas' },
+      { key: 'qc.unpaid',   label: 'Teks Belum Bayar' },
+      { key: 'qc.partial',  label: 'Teks DP / Partial' },
       { key: 'qc.endLabel', label: 'Teks Akhir Label' },
     ]},
   ];
