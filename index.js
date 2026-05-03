@@ -7,8 +7,17 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const dns = require('dns');
+const https = require('https');
 const axios = require('axios');
 const sharp = require('sharp');
+
+// Paksa Node resolve IPv4 dulu — fix ENOTFOUND di jaringan customer yang IPv6-nya
+// nge-return AAAA tapi gak routable (Node v17+ default verbatim, gak ada Happy Eyeballs).
+dns.setDefaultResultOrder('ipv4first');
+
+// Agent yang force family: 4 sebagai sabuk pengaman ekstra untuk download logo CDN.
+const ipv4HttpsAgent = new https.Agent({ family: 4, keepAlive: true });
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -122,10 +131,27 @@ async function getLogoEscPos(logoUrl, paperWidthPx = 384) {
   try {
     console.log('🖼️ Downloading logo:', logoUrl);
 
-    const response = await axios.get(logoUrl, {
-      responseType: 'arraybuffer',
-      timeout: 8000
-    });
+    // Retry sampai 3x — sering kasus ENOTFOUND first-call sembuh di attempt ke-2
+    // setelah DNS cache OS warm up.
+    let response;
+    let lastErr;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        response = await axios.get(logoUrl, {
+          responseType: 'arraybuffer',
+          timeout: 8000,
+          httpsAgent: ipv4HttpsAgent,
+          headers: { 'User-Agent': 'PrinterService/1.0' }
+        });
+        break;
+      } catch (e) {
+        lastErr = e;
+        const retryable = ['ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'ECONNRESET'].includes(e.code);
+        if (!retryable || attempt === 3) throw e;
+        console.warn(`⚠️ Logo fetch attempt ${attempt} failed (${e.code}), retrying...`);
+        await new Promise(r => setTimeout(r, 500 * attempt));
+      }
+    }
     const imageBuffer = Buffer.from(response.data);
 
     // Ukuran logo: 200px lebar (~52% lebar kertas 58mm)
