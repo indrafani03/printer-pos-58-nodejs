@@ -1017,6 +1017,10 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
   // Totals
   // Tentukan apakah baris TOTAL akhir (dengan totalAmount) akan tampil
   const isDP = paymentType && (paymentType.toUpperCase() === 'DOWNPAYMENT' || paymentType.toUpperCase() === 'DP');
+  // Untuk DP: frontend kadang kirim jumlah DP di `totalAmount` dan total order penuh di `orderTotalAmount`.
+  // Pakai totalAmount sebagai paid amount jika cashReceived tidak diisi.
+  const dpPaidFallback = (isDP && !(cashReceived || payment) && orderTotalAmount > 0 && totalAmount > 0 && totalAmount < orderTotalAmount) ? totalAmount : 0;
+  const paidAmount = (cashReceived || payment || dpPaidFallback) || 0;
   const totalValue = totalAmount || total || 0;
   const willShowFinalTotal = !isDP && totalValue > 0;
 
@@ -1053,8 +1057,8 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
   }
 
   // Bayar di bawah TOTAL
-  if ((cashReceived || payment) > 0) {
-    receipt += formatLine(t('receipt.paid') + ":", formatCurrency(cashReceived || payment, currency), paperWidth) + commands.NEW_LINE;
+  if (paidAmount > 0) {
+    receipt += formatLine(t('receipt.paid') + ":", formatCurrency(paidAmount, currency), paperWidth) + commands.NEW_LINE;
   }
 
   // Sembunyikan Cara Bayar jika jenis pembayaran HUTANG
@@ -1076,8 +1080,7 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
   // Tampilkan sisa bayar untuk DOWNPAYMENT atau HUTANG
   if (paymentType && (paymentType.toUpperCase() === 'DOWNPAYMENT' || paymentType.toUpperCase() === 'HUTANG')) {
     const orderTotal = orderTotalAmount || totalAmount || total;
-    const paid = cashReceived || payment || 0;
-    const remaining = orderTotal - paid;
+    const remaining = orderTotal - paidAmount;
     if (remaining > 0) {
       receipt += commands.BOLD_ON;
       receipt += formatLine(t('receipt.remaining') + ":", formatCurrency(remaining, currency), paperWidth) + commands.NEW_LINE;
