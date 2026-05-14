@@ -994,7 +994,10 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
         const finishingName = cleanText(finishing.name || "").substring(0, paperWidth - 12);
         const finishingQty = finishing.finishingQty || finishing.quantity || 1;
         const finishingPrice = finishing.price || 0;
-        const finishingItemTotal = finishingPrice * (finishing.multiplyByQty ? qty : 1) * finishingQty;
+        // calculatedPrice dari API sudah memperhitungkan qty, gunakan langsung untuk menghindari dobel kalkulasi
+        const finishingItemTotal = finishing.calculatedPrice != null
+          ? finishing.calculatedPrice
+          : finishingPrice * finishingQty;
         finishingTotal += finishingItemTotal;
         receipt += formatLine(`    + ${finishingName} (${finishingQty}x)`, formatCurrency(finishingItemTotal, currency), paperWidth) + commands.NEW_LINE;
       });
