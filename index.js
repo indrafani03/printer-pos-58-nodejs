@@ -12,6 +12,11 @@ const https = require('https');
 const axios = require('axios');
 const sharp = require('sharp');
 
+// Deteksi platform — Windows pakai PowerShell, macOS/Linux pakai CUPS (lpstat/lp/cancel)
+const IS_WINDOWS = process.platform === 'win32';
+const IS_MAC = process.platform === 'darwin';
+const IS_UNIX = !IS_WINDOWS; // macOS & Linux sama-sama pakai CUPS
+
 // Paksa Node resolve IPv4 dulu — fix ENOTFOUND di jaringan customer yang IPv6-nya
 // nge-return AAAA tapi gak routable (Node v17+ default verbatim, gak ada Happy Eyeballs).
 dns.setDefaultResultOrder('ipv4first');
@@ -541,8 +546,47 @@ const currencyConfig = {
   }
 };
 
+// Function untuk scan printer di macOS/Linux via CUPS (lpstat)
+function scanPrintersUnix() {
+  return new Promise((resolve) => {
+    // -e: list semua printer yang dikenal CUPS (termasuk yang lagi idle)
+    exec('lpstat -e', { timeout: 5000 }, (error, stdout) => {
+      if (error) {
+        console.error('Failed to scan printers (lpstat):', error.message);
+        resolve([]);
+        return;
+      }
+
+      const names = stdout.split('\n').map(s => s.trim()).filter(Boolean);
+      if (names.length === 0) {
+        resolve([]);
+        return;
+      }
+
+      const all = names.map(name => {
+        const lower = name.toLowerCase();
+        const isThermal = lower.includes('pos') || lower.includes('thermal') ||
+          lower.includes('58') || lower.includes('80') || lower.includes('escpos') ||
+          lower.includes('receipt');
+        return { name, port: 'CUPS', driver: '', _thermal: isThermal };
+      });
+
+      // Prioritaskan printer thermal kalau ada, kalau tidak return semua
+      const thermal = all.filter(p => p._thermal);
+      const result = (thermal.length > 0 ? thermal : all).map(p => ({
+        name: p.name,
+        port: p.port,
+        driver: p.driver
+      }));
+
+      resolve(result);
+    });
+  });
+}
+
 // Function untuk scan printer yang tersedia
 function scanPrinters() {
+  if (IS_UNIX) return scanPrintersUnix();
   return new Promise((resolve, reject) => {
     exec('powershell "Get-Printer | Where-Object {$_.PrinterStatus -eq \'Normal\'} | Select-Object Name, PortName, DriverName | ConvertTo-Json"', (error, stdout, stderr) => {
       if (error) {
@@ -587,6 +631,20 @@ function scanPrinters() {
 
 // Function untuk test printer connectivity (tanpa print kertas)
 function testPrinter(printerName) {
+  if (IS_UNIX) {
+    return new Promise((resolve) => {
+      // lpstat -p <name> exit 0 + status "enabled"/"idle" kalau printer siap
+      exec(`lpstat -p ${JSON.stringify(printerName)}`, { timeout: 3000 }, (error, stdout) => {
+        if (error) {
+          resolve(false);
+          return;
+        }
+        const out = stdout.toLowerCase();
+        // "enabled" / "idle" = siap; "disabled" = tidak siap
+        resolve(!out.includes('disabled'));
+      });
+    });
+  }
   return new Promise((resolve) => {
     // Cek status printer via PowerShell tanpa print
     exec(`powershell "Get-Printer -Name '${printerName}' | Select-Object PrinterStatus"`, {
@@ -693,6 +751,15 @@ function stopReconnectMonitor() {
 
 // Function untuk clear print jobs yang stuck
 function clearPrintJobs(printerName) {
+  if (IS_UNIX) {
+    return new Promise((resolve) => {
+      // cancel -a <name>: batalkan semua job di printer ini
+      exec(`cancel -a ${JSON.stringify(printerName)}`, { timeout: 5000 }, (error) => {
+        if (error) debugLog('Clear jobs note:', error.message);
+        resolve();
+      });
+    });
+  }
   return new Promise((resolve) => {
     exec(`powershell "Get-PrintJob -PrinterName '${printerName}' -ErrorAction SilentlyContinue | Remove-PrintJob -ErrorAction SilentlyContinue"`, {
       timeout: 5000
@@ -753,13 +820,21 @@ function printToWindowsPrinter(printerName, data, retryCount = 0) {
         return;
       }
 
-      // Use the raw_print.ps1 script
-      const rawPrintScript = path.join(__dirname, 'raw_print.ps1');
-
       debugLog(`Sending print job to ${printerName}...`);
 
-      // Execute PowerShell raw printing with retries built-in
-      exec(`powershell -ExecutionPolicy Bypass -File "${rawPrintScript}" -PrinterName "${printerName}" -DataFile "${tempFile}" -MaxRetries 2`, {
+      // Pilih command sesuai platform:
+      //  - Windows: raw_print.ps1 via PowerShell (Win32 API)
+      //  - macOS/Linux: lp -o raw (kirim ESC/POS mentah ke CUPS)
+      let printCmd;
+      if (IS_UNIX) {
+        printCmd = `lp -d ${JSON.stringify(printerName)} -o raw ${JSON.stringify(tempFile)}`;
+      } else {
+        const rawPrintScript = path.join(__dirname, 'raw_print.ps1');
+        printCmd = `powershell -ExecutionPolicy Bypass -File "${rawPrintScript}" -PrinterName "${printerName}" -DataFile "${tempFile}" -MaxRetries 2`;
+      }
+
+      // Execute raw printing with retries built-in
+      exec(printCmd, {
         timeout: 15000 // Faster timeout
       }, async (error, stdout, stderr) => {
         // Cleanup temp file
@@ -772,12 +847,19 @@ function printToWindowsPrinter(printerName, data, retryCount = 0) {
         const output = stdout + stderr;
         debugLog('Print output:', output);
 
-        if (output.includes('Print successful')) {
+        // Sukses:
+        //  - Windows: script print "Print successful"
+        //  - macOS/Linux: lp exit 0 dan output "request id is ..."
+        const success = IS_UNIX
+          ? (!error && /request id is/i.test(output))
+          : output.includes('Print successful');
+
+        if (success) {
           console.log('✅ Print completed successfully');
           lastPrintTime = Date.now();
           isPrinting = false;
           resolve('Print successful');
-        } else if (error || !output.includes('Print successful')) {
+        } else if (error || !success) {
           console.error('❌ Print failed:', output);
 
           // Retry at Node level if PowerShell retries also failed
@@ -994,12 +1076,14 @@ function createReceiptText(data, lang = currentLanguage, currency = currentCurre
         const finishingName = cleanText(finishing.name || "").substring(0, paperWidth - 12);
         const finishingQty = finishing.finishingQty || finishing.quantity || 1;
         const finishingPrice = finishing.price || 0;
+        // Jika multiplyByQty true, finishing dikalikan jumlah item (qty), jadi qty efektif = finishingQty * qty item
+        const effectiveQty = finishingQty * (finishing.multiplyByQty ? qty : 1);
         // calculatedPrice dari API sudah memperhitungkan qty, gunakan langsung untuk menghindari dobel kalkulasi
         const finishingItemTotal = finishing.calculatedPrice != null
           ? finishing.calculatedPrice
-          : finishingPrice * finishingQty;
+          : finishingPrice * effectiveQty;
         finishingTotal += finishingItemTotal;
-        receipt += formatLine(`    + ${finishingName} (${finishingQty}x)`, formatCurrency(finishingItemTotal, currency), paperWidth) + commands.NEW_LINE;
+        receipt += formatLine(`    + ${finishingName} (${effectiveQty}x)`, formatCurrency(finishingItemTotal, currency), paperWidth) + commands.NEW_LINE;
       });
     }
 
@@ -2404,10 +2488,16 @@ app.get('/printer/status', async (req, res) => {
   let pendingJobs = 0;
   try {
     const result = await new Promise((resolve) => {
-      exec(`powershell "(Get-PrintJob -PrinterName '${currentPrinter}' -ErrorAction SilentlyContinue | Measure-Object).Count"`, {
-        timeout: 3000
-      }, (error, stdout) => {
-        resolve(error ? 0 : parseInt(stdout.trim()) || 0);
+      const cmd = IS_UNIX
+        ? `lpstat -o ${JSON.stringify(currentPrinter)}`
+        : `powershell "(Get-PrintJob -PrinterName '${currentPrinter}' -ErrorAction SilentlyContinue | Measure-Object).Count"`;
+      exec(cmd, { timeout: 3000 }, (error, stdout) => {
+        if (error || !stdout) return resolve(0);
+        if (IS_UNIX) {
+          // lpstat -o: satu baris per job antri
+          return resolve(stdout.split('\n').filter(l => l.trim()).length);
+        }
+        resolve(parseInt(stdout.trim()) || 0);
       });
     });
     pendingJobs = result;
